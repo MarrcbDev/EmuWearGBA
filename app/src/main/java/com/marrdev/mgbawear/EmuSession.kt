@@ -41,6 +41,11 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     var audioWaitMs by mutableIntStateOf(0)
     var audioUnderruns by mutableIntStateOf(0)
     var audioPeak by mutableIntStateOf(0)
+    var coreRate by mutableIntStateOf(0)
+    var trackRate by mutableIntStateOf(0)
+    var audioSamples by mutableIntStateOf(0)
+    var audioWriteMs by mutableIntStateOf(0)
+    var audioQueueDepth by mutableIntStateOf(0)
     @Volatile var srcW = 240
     @Volatile var srcH = 160
     @Volatile var holder: SurfaceHolder? = null
@@ -138,7 +143,8 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         if (!Native.loadRom(rom.path)) { status = "No se pudo cargar la ROM"; return }
         Native.loadSave(sav)
         val av = Native.avInfo()
-        val rate = av[1].toInt().coerceAtLeast(8000)
+        val rate = av[1].toInt().coerceIn(8000, 192000)
+        coreRate = rate
         srcW = av[2].toInt().coerceIn(1, 240)
         srcH = av[3].toInt().coerceIn(1, 160)
 
@@ -160,6 +166,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
             // Búfer moderado: suficiente para el reloj sin añadir demasiada latencia.
             .setBufferSizeInBytes(maxOf(if (minBuf > 0) minBuf else 0, rate / 10 * 4))
             .build()
+        trackRate = track.sampleRate
         audioQueue.clear()
         track.setVolume(Settings.volume)
         audioRunning.set(true)
@@ -171,7 +178,9 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     val chunk = try { audioQueue.take() } catch (_: InterruptedException) { continue }
                     var offset = 0
                     while (offset < chunk.size && audioRunning.get()) {
+                        val writeStarted = System.nanoTime()
                         val wrote = track.write(chunk, offset, chunk.size - offset, AudioTrack.WRITE_BLOCKING)
+                        audioWriteMs = ((System.nanoTime() - writeStarted) / 1_000_000L).toInt()
                         if (wrote <= 0) break
                         offset += wrote
                     }
@@ -225,6 +234,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     var peak = 0
                     for (i in 0 until s) { val v = kotlin.math.abs(buf[i].toInt()); if (v > peak) peak = v }
                     audioPeak = peak
+                    audioSamples = s
                     val chunk = buf.copyOf(s)
                     // No descartar bloques: perder muestras entre frames genera clics,
                     // cortes y artefactos. La cola aplica back-pressure si AudioTrack se atrasa.
@@ -242,6 +252,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val wait = nextFrame - System.nanoTime()
                 if (wait > 0) LockSupport.parkNanos(wait) else if (wait < -frameNanos * 3) nextFrame = System.nanoTime()
 
+                audioQueueDepth = audioQueue.size
                 runCatching { audioUnderruns = track.underrunCount }
                 frames++
                 val now = SystemClock.uptimeMillis()
