@@ -32,6 +32,8 @@ jobs:
               -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
               -DANDROID_ABI=$ABI -DANDROID_PLATFORM=android-30 \
               -DCMAKE_BUILD_TYPE=Release \
+              -DANDROID_ARM_MODE=arm -DANDROID_ARM_NEON=ON \
+              "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -fno-stack-protector -U_FORTIFY_SOURCE -fomit-frame-pointer" \
               -DBUILD_LIBRETRO=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF \
               -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF \
               -DBUILD_SHARED=OFF -DBUILD_STATIC=ON \
@@ -53,9 +55,9 @@ jobs:
         run: base64 -d app/debug.keystore.b64 > app/debug.keystore
 
       - name: Compilar APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleRelease --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mgba-wear-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: EmuWearGBA-apk
+          path: app/build/outputs/apk/release/app-release.apk

@@ -11,7 +11,7 @@
 #include "libretro.h"
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "mgbawear", __VA_ARGS__)
-#define AUD_MAX 32768 // 16384 frames estéreo: margen para cores que entregan audio en bloques grandes
+#define AUD_MAX 16384
 
 static void *core;
 static void (*p_set_env)(retro_environment_t);
@@ -75,53 +75,42 @@ static bool env_cb(unsigned cmd, void *data) {
     }
 }
 
-static inline uint32_t e5(uint32_t v) { return (v << 3) | (v >> 2); }
-
+// El Bitmap de Kotlin es RGB_565: si el core entrega RGB565 (lo normal en mGBA) es un simple memcpy por fila.
 static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     if (!data || !px) return;
     frame_drawn = true;
     if (w > bmp_w) w = bmp_w;
     if (h > bmp_h) h = bmp_h;
     for (unsigned y = 0; y < h; y++) {
-        uint32_t *dst = (uint32_t *)(px + (size_t)y * stride);
+        uint16_t *dst = (uint16_t *)(px + (size_t)y * stride);
         const uint8_t *row = (const uint8_t *)data + y * pitch;
-        if (pixfmt == RETRO_PIXEL_FORMAT_XRGB8888) {
-            const uint32_t *s = (const uint32_t *)row;
+        if (pixfmt == RETRO_PIXEL_FORMAT_RGB565) {
+            memcpy(dst, row, w * 2);
+        } else if (pixfmt == RETRO_PIXEL_FORMAT_XRGB8888) {
+            const uint32_t *src = (const uint32_t *)row;
             for (unsigned x = 0; x < w; x++) {
-                uint32_t c = s[x];
-                dst[x] = 0xFF000000u | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF);
-            }
-        } else if (pixfmt == RETRO_PIXEL_FORMAT_RGB565) {
-            const uint16_t *s = (const uint16_t *)row;
-            for (unsigned x = 0; x < w; x++) {
-                uint32_t c = s[x], r = e5((c >> 11) & 31), g = (((c >> 5) & 63) << 2) | (((c >> 5) & 63) >> 4), b = e5(c & 31);
-                dst[x] = 0xFF000000u | (b << 16) | (g << 8) | r;
+                uint32_t c = src[x];
+                dst[x] = (uint16_t)(((c >> 8) & 0xF800) | ((c >> 5) & 0x07E0) | ((c >> 3) & 0x001F));
             }
         } else { // 0RGB1555
-            const uint16_t *s = (const uint16_t *)row;
+            const uint16_t *src = (const uint16_t *)row;
             for (unsigned x = 0; x < w; x++) {
-                uint32_t c = s[x], r = e5((c >> 10) & 31), g = e5((c >> 5) & 31), b = e5(c & 31);
-                dst[x] = 0xFF000000u | (b << 16) | (g << 8) | r;
+                uint32_t c = src[x];
+                dst[x] = (uint16_t)(((c & 0x7FE0) << 1) | (c & 0x1F));
             }
         }
     }
 }
 
-// Headroom digital antes de entregar PCM a Android. No se modifica el
-// formato ni la frecuencia de muestreo: solo se evita llegar al techo de int16.
-static inline int16_t safe_sample(int16_t v) {
-    return (int16_t)(((int32_t)v * 60) / 100);
-}
 static void audio_cb(int16_t l, int16_t r) {
-    if (aud_n + 2 <= AUD_MAX) { aud[aud_n++] = safe_sample(l); aud[aud_n++] = safe_sample(r); }
+    if (aud_n + 2 <= AUD_MAX) { aud[aud_n++] = l; aud[aud_n++] = r; }
 }
 static size_t audio_batch_cb(const int16_t *d, size_t frames) {
     size_t n = frames * 2;
     if (aud_n + n > AUD_MAX) n = (AUD_MAX - aud_n) & ~1u;
-    for (size_t i = 0; i < n; i++) aud[aud_n + i] = safe_sample(d[i]);
+    memcpy(aud + aud_n, d, n * sizeof(int16_t));
     aud_n += (int)n;
-    // libretro espera el número REAL de frames aceptados, no el solicitado.
-    return n / 2;
+    return frames;
 }
 static void poll_cb(void) {}
 static int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id) {

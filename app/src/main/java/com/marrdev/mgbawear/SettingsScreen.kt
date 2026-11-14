@@ -58,6 +58,7 @@ fun SettingsList(session: EmuSession?, onBack: () -> Unit) {
             ) { Settings.cycleFrameskip(); changed() }
         }
         item { OptionChip("Mostrar FPS", if (Settings.showFps) "Sí" else "No") { Settings.toggleFps() } }
+        item { OptionChip("Diagnóstico", if (Settings.showDiag) "Sí" else "No") { Settings.toggleDiag() } }
         item {
             OptionChip("Colores GBA", if (Settings.colorFix) "Activados" else "Desactivados") {
                 Settings.toggleColor(); changed()

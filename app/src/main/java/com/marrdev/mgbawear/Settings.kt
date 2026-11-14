@@ -26,6 +26,7 @@ object Settings {
     var screenIdx by mutableIntStateOf(0); private set
     var showFps by mutableStateOf(true); private set
     var colorFix by mutableStateOf(false); private set
+    var showDiag by mutableStateOf(true); private set
 
     val volume: Float get() = volumeOptions[volumeIdx] / 100f
     val frameskip: Int get() = frameskipOptions[frameskipIdx]
@@ -43,6 +44,7 @@ object Settings {
         screenIdx = p.getInt("screen", 0).coerceIn(0, screenValues.lastIndex)
         showFps = p.getBoolean("fps", true)
         colorFix = p.getBoolean("color", false)
+        showDiag = p.getBoolean("diag", true)
     }
 
     private fun save() {
@@ -50,7 +52,7 @@ object Settings {
             ?.putInt("volume", volumeIdx)?.putInt("frameskip", frameskipIdx)
             ?.putInt("opacity", opacityIdx)?.putInt("btnsize", btnSizeIdx)
             ?.putInt("screen", screenIdx)?.putBoolean("fps", showFps)
-            ?.putBoolean("color", colorFix)?.apply()
+            ?.putBoolean("color", colorFix)?.putBoolean("diag", showDiag)?.apply()
     }
 
     fun cycleVolume() { volumeIdx = (volumeIdx + 1) % volumeOptions.size; save() }
@@ -60,6 +62,7 @@ object Settings {
     fun cycleScreen() { screenIdx = (screenIdx + 1) % screenValues.size; save() }
     fun toggleFps() { showFps = !showFps; save() }
     fun toggleColor() { colorFix = !colorFix; save() }
+    fun toggleDiag() { showDiag = !showDiag; save() }
 
     /** Opciones del core de mGBA (nombres de las variables libretro). */
     fun pushToCore() {

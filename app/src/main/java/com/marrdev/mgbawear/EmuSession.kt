@@ -10,6 +10,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Process
+import android.util.Log
 import android.os.SystemClock
 import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
@@ -21,31 +22,21 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.locks.LockSupport
 
 /**
  * Corre el emulador en su propio hilo. El video se dibuja directo a un SurfaceView desde ese hilo
  * (sin pasar por Compose) y el audio bloqueante marca el ritmo (~60 fps).
  */
 class EmuSession(private val ctx: Context, private val rom: File) {
-    val bmp: Bitmap = Bitmap.createBitmap(240, 160, Bitmap.Config.ARGB_8888)
+    val bmp: Bitmap = Bitmap.createBitmap(240, 160, Bitmap.Config.RGB_565)
     var keys by mutableIntStateOf(0)
     var status by mutableStateOf("Cargando…")
     var toast by mutableStateOf("")
     var fps by mutableIntStateOf(0)
-    // Diagnóstico temporal: separa coste del core, dibujo, espera de audio y underruns.
-    var coreMs by mutableIntStateOf(0)
-    var drawMs by mutableIntStateOf(0)
-    var audioWaitMs by mutableIntStateOf(0)
-    var audioUnderruns by mutableIntStateOf(0)
-    var audioPeak by mutableIntStateOf(0)
-    var coreRate by mutableIntStateOf(0)
-    var trackRate by mutableIntStateOf(0)
-    var audioSamples by mutableIntStateOf(0)
-    var audioWriteMs by mutableIntStateOf(0)
-    var audioQueueDepth by mutableIntStateOf(0)
+    /** Tiempo medio por frame en ms: emulación / dibujo / audio (para diagnosticar lentitud). */
+    var perf by mutableStateOf("")
+    /** Tiempos medios por frame (ms): emulación / dibujo / espera de audio. */
+    var diag by mutableStateOf("")
     @Volatile var srcW = 240
     @Volatile var srcH = 160
     @Volatile var holder: SurfaceHolder? = null
@@ -54,9 +45,6 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     @Volatile private var dirty = true
     private val queue = ConcurrentLinkedQueue<() -> Unit>()
     private var thread: Thread? = null
-    private var audioThread: Thread? = null
-    private val audioRunning = AtomicBoolean(false)
-    private val audioQueue = ArrayBlockingQueue<ShortArray>(4)
 
     private val base = rom.nameWithoutExtension
     private val sav = File(File(ctx.filesDir, "saves").apply { mkdirs() }, "$base.sav").path
@@ -109,13 +97,9 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     fun stop() {
         running = false
         thread?.join(2000)
-        audioRunning.set(false)
-        audioThread?.interrupt()
-        audioThread?.join(1000)
     }
 
     private fun draw() {
-        val started = System.nanoTime()
         val h = holder ?: return
         val c = try { h.lockHardwareCanvas() } catch (e: Exception) { null } ?: return
         try {
@@ -130,21 +114,17 @@ class EmuSession(private val ctx: Context, private val rom: File) {
             c.drawBitmap(bmp, src, dst, paint)
         } finally {
             try { h.unlockCanvasAndPost(c) } catch (e: Exception) { }
-            drawMs = ((System.nanoTime() - started) / 1_000_000L).toInt()
         }
     }
 
     private fun loop() {
-        // El hilo de audio tiene prioridad AUDIO; el de emulación usa DISPLAY para
-        // no competir con AudioTrack ni quedar bloqueado por sus escrituras.
-        Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
         if (!Native.loadCore(ctx.filesDir.path)) { status = "No se pudo cargar el core"; return }
         Settings.pushToCore()
         if (!Native.loadRom(rom.path)) { status = "No se pudo cargar la ROM"; return }
         Native.loadSave(sav)
         val av = Native.avInfo()
-        val rate = av[1].toInt().coerceIn(8000, 192000)
-        coreRate = rate
+        val rate = av[1].toInt().coerceAtLeast(8000)
         srcW = av[2].toInt().coerceIn(1, 240)
         srcH = av[3].toInt().coerceIn(1, 160)
 
@@ -163,50 +143,26 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                     .build()
             )
-            // Búfer moderado: suficiente para el reloj sin añadir demasiada latencia.
-            .setBufferSizeInBytes(maxOf(if (minBuf > 0) minBuf else 0, rate / 10 * 4))
+            .setBufferSizeInBytes(maxOf(minBuf, rate / 60 * 4 * 6)) // ~6 frames de colchón contra cortes
             .build()
-        trackRate = track.sampleRate
-        audioQueue.clear()
-        track.setVolume(Settings.volume)
-        audioRunning.set(true)
         track.play()
-        audioThread = Thread({
-            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
-            try {
-                while (audioRunning.get() || audioQueue.isNotEmpty()) {
-                    val chunk = try { audioQueue.take() } catch (_: InterruptedException) { continue }
-                    var offset = 0
-                    while (offset < chunk.size && audioRunning.get()) {
-                        val writeStarted = System.nanoTime()
-                        val wrote = track.write(chunk, offset, chunk.size - offset, AudioTrack.WRITE_BLOCKING)
-                        audioWriteMs = ((System.nanoTime() - writeStarted) / 1_000_000L).toInt()
-                        if (wrote <= 0) break
-                        offset += wrote
-                    }
-                }
-            } finally {
-                runCatching { track.pause(); track.flush(); track.stop() }
-                track.release()
-            }
-        }, "emu-audio").also { it.start() }
         status = ""
 
-        val buf = ShortArray(32768)
+        val buf = ShortArray(16384)
         var n = 0
-        val frameNanos = (1_000_000_000.0 / av[0].coerceIn(30.0, 120.0)).toLong()
-        var nextFrame = System.nanoTime()
         var frames = 0
         var t0 = SystemClock.uptimeMillis()
-        var lastVol = Settings.volume
+        var lastVol = -1f
         var wasPaused = false
+        var tRun = 0L
+        var tDraw = 0L
+        var tAud = 0L
         try {
             while (running) {
                 while (true) { (queue.poll() ?: break).invoke() }
 
                 if (paused) {
                     if (!wasPaused) {
-                        audioQueue.clear()
                         track.pause(); track.flush()
                         wasPaused = true
                         Native.writeSave(sav)
@@ -225,39 +181,24 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val vol = Settings.volume
                 if (vol != lastVol) { track.setVolume(vol); lastVol = vol }
 
-                val coreStarted = System.nanoTime()
+                val a = System.nanoTime()
                 val r = Native.runFrame(bmp, buf, keys and 0xFFFF)
-                coreMs = ((System.nanoTime() - coreStarted) / 1_000_000L).toInt()
+                val b = System.nanoTime()
                 if (r and 0x10000 != 0) draw()
+                val c = System.nanoTime()
                 val s = r and 0xFFFF
-                if (s > 0) {
-                    var peak = 0
-                    for (i in 0 until s) { val v = kotlin.math.abs(buf[i].toInt()); if (v > peak) peak = v }
-                    audioPeak = peak
-                    audioSamples = s
-                    val chunk = buf.copyOf(s)
-                    // No descartar bloques: perder muestras entre frames genera clics,
-                    // cortes y artefactos. La cola aplica back-pressure si AudioTrack se atrasa.
-                    try {
-                        val waitStarted = System.nanoTime()
-                        audioQueue.put(chunk)
-                        audioWaitMs = ((System.nanoTime() - waitStarted) / 1_000_000L).toInt()
-                    } catch (_: InterruptedException) {
-                        if (!running) break
-                    }
-                }
+                if (s > 0) track.write(buf, 0, s)
+                val d = System.nanoTime()
+                tRun += b - a; tDraw += c - b; tAud += d - c
 
-                // Ritmo del core: no dejar que la CPU genere frames ilimitados.
-                nextFrame += frameNanos
-                val wait = nextFrame - System.nanoTime()
-                if (wait > 0) LockSupport.parkNanos(wait) else if (wait < -frameNanos * 3) nextFrame = System.nanoTime()
-
-                audioQueueDepth = audioQueue.size
-                runCatching { audioUnderruns = track.underrunCount }
                 frames++
                 val now = SystemClock.uptimeMillis()
                 if (now - t0 >= 1000) {
                     fps = (frames * 1000L / (now - t0)).toInt()
+                    val f = maxOf(frames, 1)
+                    diag = "emu ${tRun / f / 100000 / 10.0} · dib ${tDraw / f / 100000 / 10.0} · aud ${tAud / f / 100000 / 10.0} ms"
+                    Log.i("mgbawear", "fps=$fps $diag")
+                    tRun = 0; tDraw = 0; tAud = 0
                     frames = 0
                     t0 = now
                 }
@@ -266,9 +207,8 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         } finally {
             Native.writeSave(sav)
             Native.unload()
-            audioRunning.set(false)
-            audioThread?.interrupt()
-            audioThread?.join(1000)
+            track.stop()
+            track.release()
         }
     }
 }

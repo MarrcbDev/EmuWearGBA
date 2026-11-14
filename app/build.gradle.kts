@@ -13,8 +13,8 @@ android {
         applicationId = "com.marrdev.mgbawear"
         minSdk = 30
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 1
+        versionName = "0.1"
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
     signingConfigs {
@@ -28,6 +28,13 @@ android {
             }
         }
     }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug") // misma firma fija
+        }
+    }
+    lint { checkReleaseBuilds = false; abortOnError = false }
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
@@ -49,5 +56,4 @@ dependencies {
     implementation("androidx.wear.compose:compose-material:1.3.1")
     implementation("androidx.wear.compose:compose-foundation:1.3.1")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
-    implementation("com.google.zxing:core:3.5.3")
 }

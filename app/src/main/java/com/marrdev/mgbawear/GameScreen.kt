@@ -111,7 +111,7 @@ private fun Controls(session: EmuSession, enabled: Boolean, onPause: () -> Unit)
             it.bit to measurer.measure(it.label, TextStyle(color = Color.White, fontSize = 13.sp))
         }
     }
-    val fpsStyle = remember { TextStyle(color = Color(0xCCFFFFFF), fontSize = 11.sp) }
+    val fpsStyle = remember { TextStyle(color = Color(0xCCFFFFFF), fontSize = 9.sp) }
 
     Canvas(
         Modifier.fillMaxSize().pointerInput(enabled) {
@@ -145,12 +145,12 @@ private fun Controls(session: EmuSession, enabled: Boolean, onPause: () -> Unit)
             }
         }
         if (Settings.showFps) {
-            val line1 = measurer.measure("${session.fps} fps  C:${session.coreMs}ms  D:${session.drawMs}ms", fpsStyle)
-            val line2 = measurer.measure("A:${session.audioWaitMs}ms W:${session.audioWriteMs}ms U:${session.audioUnderruns}", fpsStyle)
-            val line3 = measurer.measure("SR:${session.coreRate}/${session.trackRate} S:${session.audioSamples} Q:${session.audioQueueDepth}", fpsStyle)
-            drawText(line1, topLeft = Offset((w - line1.size.width) / 2f, w * 0.125f))
-            drawText(line2, topLeft = Offset((w - line2.size.width) / 2f, w * 0.155f))
-            drawText(line3, topLeft = Offset((w - line3.size.width) / 2f, w * 0.185f))
+            val t = measurer.measure("${session.fps} fps · ${session.perf}", fpsStyle)
+            drawText(t, topLeft = Offset((w - t.size.width) / 2f, w * 0.135f))
+        }
+        if (Settings.showDiag && session.diag.isNotEmpty()) {
+            val t = measurer.measure(session.diag, fpsStyle)
+            drawText(t, topLeft = Offset((w - t.size.width) / 2f, w * 0.175f))
         }
     }
 }
