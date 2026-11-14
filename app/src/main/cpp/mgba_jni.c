@@ -1,5 +1,5 @@
-// Frontend libretro minimo: carga libmgba_libretro.so con dlopen y expone
-// lo necesario a Kotlin (video directo a un Bitmap, audio y entrada).
+// Frontend libretro minimo: carga libmgba_libretro.so con dlopen y expone lo necesario a Kotlin.
+// El video se guarda en un framebuffer RGB565 propio y se presenta directo a un ANativeWindow.
 #include <jni.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -8,10 +8,14 @@
 #include <stdbool.h>
 #include <android/bitmap.h>
 #include <android/log.h>
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
 #include "libretro.h"
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "mgbawear", __VA_ARGS__)
 #define AUD_MAX 16384
+#define FB_W 240
+#define FB_H 160
 
 static void *core;
 static void (*p_set_env)(retro_environment_t);
@@ -36,8 +40,12 @@ static char sysdir[512];
 static unsigned pixfmt = RETRO_PIXEL_FORMAT_0RGB1555;
 static struct retro_system_av_info av;
 static void *rom_buf;
-static uint8_t *px;
-static uint32_t stride, bmp_w, bmp_h;
+
+static uint16_t fb[FB_W * FB_H];
+static unsigned fb_w = FB_W, fb_h = FB_H;
+static ANativeWindow *win;
+static unsigned win_w, win_h;
+
 static int16_t aud[AUD_MAX];
 static int aud_n;
 static int keys;
@@ -75,14 +83,14 @@ static bool env_cb(unsigned cmd, void *data) {
     }
 }
 
-// El Bitmap de Kotlin es RGB_565: si el core entrega RGB565 (lo normal en mGBA) es un simple memcpy por fila.
 static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
-    if (!data || !px) return;
+    if (!data) return;
     frame_drawn = true;
-    if (w > bmp_w) w = bmp_w;
-    if (h > bmp_h) h = bmp_h;
+    if (w > FB_W) w = FB_W;
+    if (h > FB_H) h = FB_H;
+    fb_w = w; fb_h = h;
     for (unsigned y = 0; y < h; y++) {
-        uint16_t *dst = (uint16_t *)(px + (size_t)y * stride);
+        uint16_t *dst = fb + y * FB_W;
         const uint8_t *row = (const uint8_t *)data + y * pitch;
         if (pixfmt == RETRO_PIXEL_FORMAT_RGB565) {
             memcpy(dst, row, w * 2);
@@ -117,8 +125,6 @@ static int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned
     if (port != 0 || device != RETRO_DEVICE_JOYPAD || id > 15) return 0;
     return (keys >> id) & 1;
 }
-
-#define SYM(n) do { p_##n = dlsym(core, "retro_" #n); if (!p_##n) { LOGE("falta retro_" #n); return JNI_FALSE; } } while (0)
 
 JNIEXPORT jboolean JNICALL
 Java_com_marrdev_mgbawear_Native_loadCore(JNIEnv *env, jclass c, jstring dir) {
@@ -183,20 +189,54 @@ Java_com_marrdev_mgbawear_Native_avInfo(JNIEnv *env, jclass c) {
     return a;
 }
 
+// Ejecuta un frame. Devuelve (shorts de audio) | 0x10000 si hay un frame nuevo en el framebuffer.
 JNIEXPORT jint JNICALL
-Java_com_marrdev_mgbawear_Native_runFrame(JNIEnv *env, jclass c, jobject bmp, jshortArray audio, jint k) {
-    AndroidBitmapInfo bi;
-    void *pixels = NULL;
-    if (AndroidBitmap_getInfo(env, bmp, &bi) < 0 || AndroidBitmap_lockPixels(env, bmp, &pixels) < 0) return 0;
-    px = pixels; stride = bi.stride; bmp_w = bi.width; bmp_h = bi.height;
+Java_com_marrdev_mgbawear_Native_runFrame(JNIEnv *env, jclass c, jshortArray audio, jint k) {
     keys = k;
     aud_n = 0;
     frame_drawn = false;
     p_run();
-    px = NULL;
-    AndroidBitmap_unlockPixels(env, bmp);
     (*env)->SetShortArrayRegion(env, audio, 0, aud_n, aud);
     return aud_n | (frame_drawn ? 0x10000 : 0);
+}
+
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_setSurface(JNIEnv *env, jclass c, jobject surface) {
+    if (win) { ANativeWindow_release(win); win = NULL; }
+    win_w = win_h = 0;
+    if (surface) win = ANativeWindow_fromSurface(env, surface);
+}
+
+// Copia el framebuffer a la ventana (un memcpy pequeño; el sistema escala al tamaño de la vista).
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_present(JNIEnv *env, jclass c) {
+    if (!win) return;
+    if (win_w != fb_w || win_h != fb_h) {
+        ANativeWindow_setBuffersGeometry(win, fb_w, fb_h, WINDOW_FORMAT_RGB_565);
+        win_w = fb_w; win_h = fb_h;
+    }
+    ANativeWindow_Buffer b;
+    if (ANativeWindow_lock(win, &b, NULL) < 0) return;
+    if (b.format == WINDOW_FORMAT_RGB_565) {
+        uint16_t *dst = (uint16_t *)b.bits;
+        unsigned rows = fb_h < (unsigned)b.height ? fb_h : (unsigned)b.height;
+        unsigned cols = fb_w < (unsigned)b.width ? fb_w : (unsigned)b.width;
+        for (unsigned y = 0; y < rows; y++) memcpy(dst + (size_t)y * b.stride, fb + y * FB_W, cols * 2);
+    }
+    ANativeWindow_unlockAndPost(win);
+}
+
+// Copia el ultimo frame a un Bitmap RGB_565 (para las miniaturas de los estados).
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_copyFrame(JNIEnv *env, jclass c, jobject bmp) {
+    AndroidBitmapInfo bi;
+    void *pixels = NULL;
+    if (AndroidBitmap_getInfo(env, bmp, &bi) < 0 || bi.format != ANDROID_BITMAP_FORMAT_RGB_565) return;
+    if (AndroidBitmap_lockPixels(env, bmp, &pixels) < 0) return;
+    unsigned rows = fb_h < bi.height ? fb_h : bi.height;
+    unsigned cols = fb_w < bi.width ? fb_w : bi.width;
+    for (unsigned y = 0; y < rows; y++) memcpy((uint8_t *)pixels + (size_t)y * bi.stride, fb + y * FB_W, cols * 2);
+    AndroidBitmap_unlockPixels(env, bmp);
 }
 
 JNIEXPORT void JNICALL
@@ -219,13 +259,6 @@ Java_com_marrdev_mgbawear_Native_writeSave(JNIEnv *env, jclass c, jstring path) 
     FILE *f = fopen(p, "wb");
     if (f) { fwrite(m, 1, n, f); fclose(f); }
     (*env)->ReleaseStringUTFChars(env, path, p);
-}
-
-JNIEXPORT void JNICALL
-Java_com_marrdev_mgbawear_Native_unload(JNIEnv *env, jclass c) {
-    if (p_unload_game) p_unload_game();
-    free(rom_buf);
-    rom_buf = NULL;
 }
 
 JNIEXPORT jboolean JNICALL
@@ -281,4 +314,11 @@ Java_com_marrdev_mgbawear_Native_setOption(JNIEnv *env, jclass c, jstring k, jst
     }
     (*env)->ReleaseStringUTFChars(env, k, ks);
     (*env)->ReleaseStringUTFChars(env, v, vs);
+}
+
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_unload(JNIEnv *env, jclass c) {
+    if (p_unload_game) p_unload_game();
+    free(rom_buf);
+    rom_buf = NULL;
 }

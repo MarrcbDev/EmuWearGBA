@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,6 +38,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -73,7 +78,14 @@ fun GameScreen(rom: File, onExit: () -> Unit) {
         if (session.toast.isNotEmpty()) { delay(1500); session.toast = "" }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val wPx = with(density) { maxWidth.toPx() }
+        val gwPx = wPx * Settings.screenW
+        val ghPx = gwPx * session.srcH / session.srcW
+        val leftPx = (wPx - gwPx) / 2f
+        val topPx = wPx * Layout.GAME_CY - ghPx / 2f
+        // Superficie del tamaño exacto del juego: el compositor la escala, sin costo para la CPU
         AndroidView(
             factory = { c ->
                 SurfaceView(c).apply {
@@ -84,7 +96,10 @@ fun GameScreen(rom: File, onExit: () -> Unit) {
                     })
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            update = { it.holder.setFixedSize(session.srcW, session.srcH) },
+            modifier = Modifier
+                .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
+                .size(with(density) { gwPx.toDp() }, with(density) { ghPx.toDp() })
         )
         Controls(session, enabled = !menu) { menu = true }
 
@@ -111,7 +126,7 @@ private fun Controls(session: EmuSession, enabled: Boolean, onPause: () -> Unit)
             it.bit to measurer.measure(it.label, TextStyle(color = Color.White, fontSize = 13.sp))
         }
     }
-    val fpsStyle = remember { TextStyle(color = Color(0xCCFFFFFF), fontSize = 9.sp) }
+    val fpsStyle = remember { TextStyle(color = Color(0xE6FFFFFF), fontSize = 8.sp, textAlign = TextAlign.Center) }
 
     Canvas(
         Modifier.fillMaxSize().pointerInput(enabled) {
@@ -146,7 +161,7 @@ private fun Controls(session: EmuSession, enabled: Boolean, onPause: () -> Unit)
         }
         if (Settings.showFps) {
             val t = measurer.measure("${session.fps} fps · ${session.perf}", fpsStyle)
-            drawText(t, topLeft = Offset((w - t.size.width) / 2f, w * 0.135f))
+            drawText(t, topLeft = Offset((w - t.size.width) / 2f, w * 0.115f))
         }
         if (Settings.showDiag && session.diag.isNotEmpty()) {
             val t = measurer.measure(session.diag, fpsStyle)

@@ -5,4 +5,4 @@ add_library(mgbajni SHARED mgba_jni.c)
 # La variante debug de Gradle compila en -O0: forzamos optimización
 target_compile_options(mgbajni PRIVATE -O3 -DNDEBUG)
 target_include_directories(mgbajni PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(mgbajni log jnigraphics dl)
+target_link_libraries(mgbajni log jnigraphics android dl)

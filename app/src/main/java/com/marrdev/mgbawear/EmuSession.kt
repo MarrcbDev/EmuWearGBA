@@ -2,7 +2,6 @@ package com.marrdev.mgbawear
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
@@ -37,8 +36,8 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     var perf by mutableStateOf("")
     /** Tiempos medios por frame (ms): emulación / dibujo / espera de audio. */
     var diag by mutableStateOf("")
-    @Volatile var srcW = 240
-    @Volatile var srcH = 160
+    var srcW by mutableIntStateOf(240)
+    var srcH by mutableIntStateOf(160)
     @Volatile var holder: SurfaceHolder? = null
     @Volatile private var running = false
     @Volatile private var paused = false
@@ -99,18 +98,13 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         thread?.join(2000)
     }
 
+    /** La superficie tiene tamaño fijo (srcW x srcH): copiamos 1:1 y el compositor la escala. */
     private fun draw() {
         val h = holder ?: return
-        val c = try { h.lockHardwareCanvas() } catch (e: Exception) { null } ?: return
+        val c = try { h.lockCanvas() } catch (e: Exception) { null } ?: return
         try {
-            c.drawColor(Color.BLACK)
-            val w = c.width.toFloat()
-            val gw = w * Settings.screenW
-            val gh = gw * srcH / srcW
-            val left = (w - gw) / 2f
-            val top = w * Layout.GAME_CY - gh / 2f
             src.set(0, 0, srcW, srcH)
-            dst.set(left, top, left + gw, top + gh)
+            dst.set(0f, 0f, c.width.toFloat(), c.height.toFloat())
             c.drawBitmap(bmp, src, dst, paint)
         } finally {
             try { h.unlockCanvasAndPost(c) } catch (e: Exception) { }
@@ -153,6 +147,14 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         }
     }
 
+    private fun snapRate(measured: Double, declared: Int): Int {
+        if (measured < 8000) return declared
+        if (Math.abs(measured / declared - 1) < 0.08) return declared
+        val common = listOf(32768, 44100, 48000, 65536, 96000)
+        val near = common.minByOrNull { Math.abs(it - measured) }!!
+        return if (Math.abs(near / measured - 1) < 0.08) near else measured.toInt().coerceIn(8000, 192000)
+    }
+
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
         if (!Native.loadCore(ctx.filesDir.path)) { status = "No se pudo cargar el core"; return }
@@ -160,10 +162,39 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         if (!Native.loadRom(rom.path)) { status = "No se pudo cargar la ROM"; return }
         Native.loadSave(sav)
         val av = Native.avInfo()
-        val rate = av[1].toInt().coerceAtLeast(8000)
+        val declared = av[1].toInt().coerceAtLeast(8000)
         srcW = av[2].toInt().coerceIn(1, 240)
         srcH = av[3].toInt().coerceIn(1, 160)
-        val frameNs = (1_000_000_000.0 / av[0].coerceIn(30.0, 120.0)).toLong()
+        val coreFps = av[0].coerceIn(30.0, 120.0)
+        val frameNs = (1_000_000_000.0 / coreFps).toLong()
+        val buf = ShortArray(16384)
+
+        var next = System.nanoTime()
+        var tSleep = 0L
+        fun pace() {
+            next += frameNs
+            val wait = next - System.nanoTime()
+            if (wait > 0) {
+                tSleep += wait
+                Thread.sleep(wait / 1_000_000, (wait % 1_000_000).toInt())
+            } else if (wait < -100_000_000L) {
+                next = System.nanoTime()
+            }
+        }
+
+        // Calentamiento (~0.75 s): medimos cuánto audio produce de verdad el core por frame
+        // y usamos esa tasa real para el AudioTrack (el core a veces no coincide con lo que declara).
+        var warmFrames = 0L
+        val warmN = 45
+        for (i in 0 until warmN) {
+            if (!running) break
+            val r = Native.runFrame(bmp, buf, 0)
+            if (r and 0x10000 != 0) draw()
+            warmFrames += (r and 0xFFFF) / 2
+            pace()
+        }
+        val rate = snapRate(warmFrames.toDouble() / warmN * coreFps, declared)
+        val audioInfo = "audio $rate Hz (core dice $declared)"
 
         val minBuf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
         val track = AudioTrack.Builder()
@@ -188,15 +219,15 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         status = ""
 
         val maxFill = rate / 10 * 2 // ~100 ms de audio como máximo en el anillo (en shorts estéreo)
-        val buf = ShortArray(16384)
         var n = 0
         var frames = 0
         var t0 = SystemClock.uptimeMillis()
         var lastVol = -1f
         var wasPaused = false
-        var tRun = 0L; var tDraw = 0L; var tSleep = 0L; var shorts = 0L
+        var tRun = 0L; var tDraw = 0L; var shorts = 0L
         var lastDrop = 0
-        var next = System.nanoTime()
+        next = System.nanoTime()
+        tSleep = 0
         try {
             while (running) {
                 while (true) { (queue.poll() ?: break).invoke() }
@@ -233,23 +264,16 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 shorts += s
                 tRun += a1 - a0; tDraw += a2 - a1
 
-                // Ritmo por reloj (a los fps que declara el core), independiente del audio
-                next += frameNs
-                val wait = next - System.nanoTime()
-                if (wait > 0) {
-                    tSleep += wait
-                    Thread.sleep(wait / 1_000_000, (wait % 1_000_000).toInt())
-                } else if (wait < -100_000_000L) {
-                    next = System.nanoTime()
-                }
+                pace() // ritmo por reloj (fps del core), independiente del audio
 
                 frames++
                 val now = SystemClock.uptimeMillis()
                 if (now - t0 >= 1000) {
                     fps = (frames * 1000L / (now - t0)).toInt()
                     val d = pump.dropped
-                    perf = "emu ${tRun / frames / 1_000_000}ms · dib ${tDraw / frames / 1_000_000}ms · " +
-                        "esp ${tSleep / frames / 1_000_000}ms · aud ${shorts / 2 / frames}/f · perd ${(d - lastDrop) / 2}"
+                    perf = "emu ${tRun / frames / 1_000_000} · dib ${tDraw / frames / 1_000_000} · " +
+                        "esp ${tSleep / frames / 1_000_000} ms\n" +
+                        "$audioInfo · ${shorts / 2 / frames}/f · perd ${(d - lastDrop) / 2}"
                     lastDrop = d
                     tRun = 0; tDraw = 0; tSleep = 0; shorts = 0
                     frames = 0
