@@ -107,13 +107,17 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     }
 }
 
+// Atenuación conservadora para evitar clipping en la salida del reloj/auriculares.
+static inline int16_t safe_sample(int16_t v) {
+    return (int16_t)(((int32_t)v * 70) / 100);
+}
 static void audio_cb(int16_t l, int16_t r) {
-    if (aud_n + 2 <= AUD_MAX) { aud[aud_n++] = l; aud[aud_n++] = r; }
+    if (aud_n + 2 <= AUD_MAX) { aud[aud_n++] = safe_sample(l); aud[aud_n++] = safe_sample(r); }
 }
 static size_t audio_batch_cb(const int16_t *d, size_t frames) {
     size_t n = frames * 2;
     if (aud_n + n > AUD_MAX) n = (AUD_MAX - aud_n) & ~1u;
-    memcpy(aud + aud_n, d, n * sizeof(int16_t));
+    for (size_t i = 0; i < n; i++) aud[aud_n + i] = safe_sample(d[i]);
     aud_n += (int)n;
     // libretro espera el número REAL de frames aceptados, no el solicitado.
     return n / 2;

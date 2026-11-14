@@ -15,7 +15,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
-        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
     signingConfigs {
         // Firma fija para que cada APK nuevo se pueda instalar encima del anterior
@@ -49,4 +49,5 @@ dependencies {
     implementation("androidx.wear.compose:compose-material:1.3.1")
     implementation("androidx.wear.compose:compose-foundation:1.3.1")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("com.google.zxing:core:3.5.3")
 }

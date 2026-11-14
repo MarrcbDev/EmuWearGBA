@@ -2,6 +2,7 @@ package com.marrdev.mgbawear
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
 import android.net.ConnectivityManager
 import android.os.Bundle
 import android.view.WindowManager
@@ -39,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +57,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.Inet4Address
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -235,39 +240,38 @@ fun CoverImage(base: String, modifier: Modifier) {
     }
 }
 
+private fun makeUploadQr(url: String): Bitmap? = runCatching {
+    val matrix = QRCodeWriter().encode(url, BarcodeFormat.QR_CODE, 360, 360,
+        mapOf(EncodeHintType.MARGIN to 1))
+    Bitmap.createBitmap(360, 360, Bitmap.Config.ARGB_8888).also { bmp ->
+        for (y in 0 until 360) for (x in 0 until 360) {
+            bmp.setPixel(x, y, if (matrix[x, y]) AndroidColor.BLACK else AndroidColor.WHITE)
+        }
+    }
+}.getOrNull()
+
 @Composable
 fun UploadScreen(ip: String?) {
+    val url = ip?.let { "http://$it:8080" }
+    val qr = remember(url) { url?.let(::makeUploadQr) }
     Box(Modifier.fillMaxSize().background(bgBrush)) {
         ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 32.dp, bottom = 40.dp, start = 14.dp, end = 14.dp),
+            contentPadding = PaddingValues(top = 24.dp, bottom = 40.dp, start = 14.dp, end = 14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item { Text("Subir juegos", style = MaterialTheme.typography.title3, color = Accent) }
-            if (ip == null) {
-                item {
-                    Text(
-                        "Conecta el reloj a una red Wi-Fi para poder enviar juegos.",
-                        textAlign = TextAlign.Center, style = MaterialTheme.typography.body2
-                    )
-                }
+            if (url == null) {
+                item { Text("Conecta el reloj a una red Wi-Fi para generar el QR de subida.", textAlign = TextAlign.Center, style = MaterialTheme.typography.body2) }
             } else {
-                item { Text("1. Pon el teléfono en la misma red Wi-Fi", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center) }
-                item { Text("2. Abre en su navegador:", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center) }
-                item {
-                    Text(
-                        "http://$ip:8080",
-                        color = Accent, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.title3
-                    )
+                if (qr != null) item {
+                    Image(bitmap = qr.asImageBitmap(), contentDescription = "Código QR para abrir la página local de subida",
+                        modifier = Modifier.size(174.dp))
                 }
-                item {
-                    Text(
-                        "3. Suelta tus .gba, .gb o .gbc (y carátulas o .sav si quieres)",
-                        style = MaterialTheme.typography.body2, textAlign = TextAlign.Center
-                    )
-                }
+                item { Text("Escanea con la cámara del teléfono", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center) }
+                item { Text(url, color = Accent, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, style = MaterialTheme.typography.caption1) }
+                item { Text("Conecta el teléfono a la misma red Wi-Fi del reloj. Desde la página podrás subir ROM, partidas y carátulas.", style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center) }
             }
         }
     }
