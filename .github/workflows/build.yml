@@ -1,7 +1,7 @@
 name: build-apk
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -34,11 +34,14 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DBUILD_LIBRETRO=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF \
               -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF \
+              -DBUILD_SHARED=OFF -DBUILD_STATIC=ON \
+              -DUSE_SQLITE3=OFF -DUSE_DISCORD_RPC=OFF -DUSE_DEBUGGERS=OFF -DUSE_GDB_STUB=OFF \
               -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF -DUSE_LIBZIP=OFF -DUSE_EDITLINE=OFF \
-              -DUSE_ELF=OFF -DUSE_MAGICK=OFF -DENABLE_SCRIPTING=OFF
+              -DUSE_ELF=OFF -DENABLE_SCRIPTING=OFF
             cmake --build build-$ABI -j"$(nproc)"
             SO=$(find build-$ABI -name '*libretro*.so' | head -1)
             [ -n "$SO" ] || { echo "No se generó el .so libretro para $ABI"; exit 1; }
+            echo "Core: $SO"; readelf -d "$SO" | grep NEEDED || true
             mkdir -p app/src/main/jniLibs/$ABI
             cp "$SO" app/src/main/jniLibs/$ABI/libmgba_libretro.so
           done
