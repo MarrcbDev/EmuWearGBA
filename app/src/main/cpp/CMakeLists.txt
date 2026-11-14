@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+project(mgbajni C)
+add_library(mgbajni SHARED mgba_jni.c)
+target_include_directories(mgbajni PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mgbajni log jnigraphics dl)

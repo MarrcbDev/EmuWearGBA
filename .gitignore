@@ -1,0 +1,7 @@
+build/
+.gradle/
+local.properties
+mgba-src/
+build-*/
+app/src/main/jniLibs/
+app/src/main/cpp/libretro.h
