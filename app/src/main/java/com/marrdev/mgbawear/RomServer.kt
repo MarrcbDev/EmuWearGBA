@@ -1,32 +1,106 @@
 package com.marrdev.mgbawear
 
+import android.content.Context
 import fi.iki.elonen.NanoHTTPD
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
-/** Servidor HTTP local: GET / muestra la página de subida, POST /upload?name=x.gba guarda la ROM. */
-class RomServer(private val dir: File, port: Int = 8080) : NanoHTTPD(port) {
+/**
+ * Servidor HTTP local (puerto 8080):
+ *  GET  /                 página web
+ *  GET  /api/library      lista de juegos en JSON
+ *  GET  /cover?name=X     carátula de X
+ *  GET  /sav?name=X       descarga la partida guardada de X
+ *  POST /upload?name=F    sube ROM (.gba/.gb/.gbc) o partida (.sav)
+ *  POST /cover?rom=X      sube la carátula de X (cualquier imagen)
+ *  POST /delete?file=F    borra la ROM y su carátula (conserva partidas y estados)
+ *  POST /fetch-covers     busca carátulas en línea desde el reloj
+ */
+class RomServer(private val ctx: Context, port: Int = 8080) : NanoHTTPD(port) {
+    private val romExt = setOf("gba", "gb", "gbc")
+    private val romsDir get() = File(ctx.filesDir, "roms").apply { mkdirs() }
+    private val savesDir get() = File(ctx.filesDir, "saves").apply { mkdirs() }
 
-    override fun serve(session: IHTTPSession): Response {
-        if (session.method == Method.POST && session.uri == "/upload") return upload(session)
-        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", PAGE)
+    private fun text(st: Response.IStatus, msg: String) =
+        newFixedLengthResponse(st, "text/plain; charset=utf-8", msg)
+
+    private fun ok() = text(Response.Status.OK, "ok")
+
+    private fun roms(): List<File> =
+        romsDir.listFiles()?.filter { it.extension.lowercase() in romExt }
+            ?.sortedBy { it.name.lowercase() } ?: emptyList()
+
+    override fun serve(session: IHTTPSession): Response =
+        try { route(session) } catch (e: Exception) {
+            text(Response.Status.INTERNAL_ERROR, e.message ?: "error")
+        }
+
+    private fun route(s: IHTTPSession): Response {
+        val get = s.method == Method.GET
+        val post = s.method == Method.POST
+        return when {
+            get && s.uri == "/" -> page()
+            get && s.uri == "/api/library" -> library()
+            get && s.uri == "/cover" -> cover(s)
+            get && s.uri == "/sav" -> sav(s)
+            post && s.uri == "/upload" -> upload(s)
+            post && s.uri == "/cover" -> uploadCover(s)
+            post && s.uri == "/delete" -> delete(s)
+            post && s.uri == "/fetch-covers" -> fetchCovers()
+            else -> text(Response.Status.NOT_FOUND, "no encontrado")
+        }
     }
 
-    private fun upload(session: IHTTPSession): Response {
-        val name = File(session.parms["name"] ?: "").name
-        val ext = name.substringAfterLast('.', "").lowercase()
-        if (name.isEmpty() || ext !in setOf("gba", "gb", "gbc"))
-            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Solo .gba, .gb o .gbc")
-        val len = session.headers["content-length"]?.toLongOrNull()
-            ?: return newFixedLengthResponse(Response.Status.LENGTH_REQUIRED, "text/plain", "Falta content-length")
-        if (len > 64L * 1024 * 1024)
-            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Archivo demasiado grande")
+    private fun page(): Response {
+        val html = ctx.assets.open("web/index.html").use { it.readBytes() }
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", String(html, Charsets.UTF_8))
+    }
 
-        dir.mkdirs()
-        val tmp = File(dir, "$name.part")
+    private fun library(): Response {
+        val arr = JSONArray()
+        for (f in roms()) {
+            val base = f.nameWithoutExtension
+            val cov = Covers.file(ctx, base)
+            arr.put(
+                JSONObject()
+                    .put("file", f.name)
+                    .put("name", base)
+                    .put("system", f.extension.uppercase())
+                    .put("size", f.length())
+                    .put("cover", cov.exists())
+                    .put("cover_v", cov.lastModified())
+                    .put("sav", File(savesDir, "$base.sav").exists())
+            )
+        }
+        return newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", arr.toString())
+    }
+
+    private fun cover(s: IHTTPSession): Response {
+        val f = Covers.file(ctx, File(s.parms["name"] ?: "").name)
+        if (!f.exists()) return text(Response.Status.NOT_FOUND, "sin carátula")
+        return newFixedLengthResponse(Response.Status.OK, "image/jpeg", f.inputStream(), f.length())
+    }
+
+    private fun sav(s: IHTTPSession): Response {
+        val name = File(s.parms["name"] ?: "").name
+        val f = File(savesDir, "$name.sav")
+        if (!f.exists()) return text(Response.Status.NOT_FOUND, "sin partida")
+        val r = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", f.inputStream(), f.length())
+        r.addHeader("Content-Disposition", "attachment; filename=\"$name.sav\"")
+        return r
+    }
+
+    /** Guarda el cuerpo crudo de la petición en [target]; devuelve una respuesta de error o null si salió bien. */
+    private fun readBody(s: IHTTPSession, target: File, max: Long): Response? {
+        val len = s.headers["content-length"]?.toLongOrNull()
+            ?: return text(Response.Status.LENGTH_REQUIRED, "Falta content-length")
+        if (len > max) return text(Response.Status.BAD_REQUEST, "Archivo demasiado grande")
+        val tmp = File(target.parentFile, target.name + ".part")
         var left = len
         tmp.outputStream().use { out ->
             val buf = ByteArray(64 * 1024)
-            val ins = session.inputStream
+            val ins = s.inputStream
             while (left > 0) {
                 val n = ins.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
                 if (n < 0) break
@@ -36,34 +110,45 @@ class RomServer(private val dir: File, port: Int = 8080) : NanoHTTPD(port) {
         }
         if (left != 0L) {
             tmp.delete()
-            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Subida incompleta")
+            return text(Response.Status.BAD_REQUEST, "Subida incompleta")
         }
-        File(dir, name).delete()
-        tmp.renameTo(File(dir, name))
-        return newFixedLengthResponse(Response.Status.OK, "text/plain", "ok")
+        target.delete()
+        tmp.renameTo(target)
+        return null
     }
 
-    companion object {
-        private const val PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
-<title>mGBA Watch</title>
-<body style="font-family:sans-serif;max-width:480px;margin:2em auto;padding:0 1em">
-<h2>Enviar ROMs al reloj</h2>
-<input type=file id=f accept=".gba,.gb,.gbc" multiple>
-<button onclick=up()>Subir</button><pre id=log></pre>
-<script>
-async function up(){
-  const log=document.getElementById('log');log.textContent='';
-  for(const f of document.getElementById('f').files){
-    await new Promise(res=>{
-      const x=new XMLHttpRequest();
-      x.open('POST','/upload?name='+encodeURIComponent(f.name));
-      x.upload.onprogress=e=>log.textContent=f.name+': '+Math.round(e.loaded*100/e.total)+'%';
-      x.onload=()=>{log.textContent+='\n'+f.name+': '+(x.status==200?'listo':'error '+x.responseText);res()};
-      x.onerror=()=>{log.textContent+='\n'+f.name+': error de red';res()};
-      x.send(f);
-    });
-  }
-}
-</script>"""
+    private fun upload(s: IHTTPSession): Response {
+        val name = File(s.parms["name"] ?: "").name
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val target = when (ext) {
+            in romExt -> File(romsDir, name)
+            "sav" -> File(savesDir, name)
+            else -> return text(Response.Status.BAD_REQUEST, "Solo .gba, .gb, .gbc o .sav")
+        }
+        readBody(s, target, 64L * 1024 * 1024)?.let { return it }
+        if (ext in romExt) Thread { Covers.fetchMissing(ctx, listOf(target)) }.start()
+        return ok()
+    }
+
+    private fun uploadCover(s: IHTTPSession): Response {
+        val base = File(s.parms["rom"] ?: "").name
+        if (base.isEmpty()) return text(Response.Status.BAD_REQUEST, "Falta el juego")
+        readBody(s, Covers.file(ctx, base), 10L * 1024 * 1024)?.let { return it }
+        Covers.setCover(ctx, base)
+        return ok()
+    }
+
+    private fun delete(s: IHTTPSession): Response {
+        val f = File(romsDir, File(s.parms["file"] ?: "").name)
+        if (!f.exists()) return text(Response.Status.NOT_FOUND, "no existe")
+        Covers.deleteRom(ctx, f)
+        return ok()
+    }
+
+    private fun fetchCovers(): Response {
+        Covers.clearMarkers(ctx)
+        val list = roms()
+        Thread { Covers.fetchMissing(ctx, list) }.start()
+        return ok()
     }
 }

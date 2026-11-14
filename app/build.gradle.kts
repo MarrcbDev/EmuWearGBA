@@ -17,6 +17,17 @@ android {
         versionName = "0.1"
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
+    signingConfigs {
+        // Firma fija para que cada APK nuevo se pueda instalar encima del anterior
+        if (file("debug.keystore").exists()) {
+            getByName("debug") {
+                storeFile = file("debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }

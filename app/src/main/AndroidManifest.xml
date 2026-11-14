@@ -6,14 +6,17 @@
 
     <application
         android:allowBackup="false"
-        android:label="mGBA Watch"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="EmuWearGBA"
+        android:theme="@style/Theme.EmuWear">
         <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="true" />
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:label="EmuWearGBA">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -49,6 +49,9 @@ jobs:
           [ -n "$H" ] || { echo "No se encontró libretro.h"; exit 1; }
           cp "$H" app/src/main/cpp/libretro.h
 
+      - name: Restaurar firma fija
+        run: base64 -d app/debug.keystore.b64 > app/debug.keystore
+
       - name: Compilar APK
         run: gradle :app:assembleDebug --no-daemon
 

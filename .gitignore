@@ -5,3 +5,4 @@ mgba-src/
 build-*/
 app/src/main/jniLibs/
 app/src/main/cpp/libretro.h
+app/debug.keystore

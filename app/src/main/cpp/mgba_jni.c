@@ -27,6 +27,10 @@ static void (*p_run)(void);
 static void (*p_av)(struct retro_system_av_info *);
 static void *(*p_mem_data)(unsigned);
 static size_t (*p_mem_size)(unsigned);
+static size_t (*p_ser_size)(void);
+static bool (*p_ser)(void *, size_t);
+static bool (*p_unser)(const void *, size_t);
+static void (*p_reset)(void);
 
 static char sysdir[512];
 static unsigned pixfmt = RETRO_PIXEL_FORMAT_0RGB1555;
@@ -37,6 +41,12 @@ static uint32_t stride, bmp_w, bmp_h;
 static int16_t aud[AUD_MAX];
 static int aud_n;
 static int keys;
+static bool frame_drawn;
+
+// Opciones del core (retro_variable) que se fijan desde Kotlin
+static struct { char key[64]; char val[64]; } opts[16];
+static int nopts;
+static volatile bool opts_dirty = true;
 
 static bool env_cb(unsigned cmd, void *data) {
     switch (cmd) {
@@ -45,6 +55,16 @@ static bool env_cb(unsigned cmd, void *data) {
         return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:
         *(bool *)data = true;
+        return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE: {
+        struct retro_variable *v = (struct retro_variable *)data;
+        for (int i = 0; i < nopts; i++)
+            if (!strcmp(opts[i].key, v->key)) { v->value = opts[i].val; return true; }
+        return false;
+    }
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        *(bool *)data = opts_dirty;
+        opts_dirty = false;
         return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
@@ -59,6 +79,7 @@ static inline uint32_t e5(uint32_t v) { return (v << 3) | (v >> 2); }
 
 static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     if (!data || !px) return;
+    frame_drawn = true;
     if (w > bmp_w) w = bmp_w;
     if (h > bmp_h) h = bmp_h;
     for (unsigned y = 0; y < h; y++) {
@@ -125,6 +146,10 @@ Java_com_marrdev_mgbawear_Native_loadCore(JNIEnv *env, jclass c, jstring dir) {
     *(void **)&p_av = dlsym(core, "retro_get_system_av_info");
     *(void **)&p_mem_data = dlsym(core, "retro_get_memory_data");
     *(void **)&p_mem_size = dlsym(core, "retro_get_memory_size");
+    *(void **)&p_ser_size = dlsym(core, "retro_serialize_size");
+    *(void **)&p_ser = dlsym(core, "retro_serialize");
+    *(void **)&p_unser = dlsym(core, "retro_unserialize");
+    *(void **)&p_reset = dlsym(core, "retro_reset");
     if (!p_set_env || !p_init || !p_load_game || !p_run || !p_av) { LOGE("simbolos libretro incompletos"); return JNI_FALSE; }
     p_set_env(env_cb);
     p_set_video(video_cb);
@@ -171,11 +196,12 @@ Java_com_marrdev_mgbawear_Native_runFrame(JNIEnv *env, jclass c, jobject bmp, js
     px = pixels; stride = bi.stride; bmp_w = bi.width; bmp_h = bi.height;
     keys = k;
     aud_n = 0;
+    frame_drawn = false;
     p_run();
     px = NULL;
     AndroidBitmap_unlockPixels(env, bmp);
     (*env)->SetShortArrayRegion(env, audio, 0, aud_n, aud);
-    return aud_n;
+    return aud_n | (frame_drawn ? 0x10000 : 0);
 }
 
 JNIEXPORT void JNICALL
@@ -205,4 +231,59 @@ Java_com_marrdev_mgbawear_Native_unload(JNIEnv *env, jclass c) {
     if (p_unload_game) p_unload_game();
     free(rom_buf);
     rom_buf = NULL;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_marrdev_mgbawear_Native_saveState(JNIEnv *env, jclass c, jstring path) {
+    if (!p_ser_size || !p_ser) return JNI_FALSE;
+    size_t n = p_ser_size();
+    void *b = malloc(n);
+    if (!b) return JNI_FALSE;
+    jboolean ok = JNI_FALSE;
+    if (p_ser(b, n)) {
+        const char *p = (*env)->GetStringUTFChars(env, path, NULL);
+        FILE *f = fopen(p, "wb");
+        if (f) { ok = fwrite(b, 1, n, f) == n; fclose(f); }
+        (*env)->ReleaseStringUTFChars(env, path, p);
+    }
+    free(b);
+    return ok;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_marrdev_mgbawear_Native_loadState(JNIEnv *env, jclass c, jstring path) {
+    if (!p_unser) return JNI_FALSE;
+    const char *p = (*env)->GetStringUTFChars(env, path, NULL);
+    FILE *f = fopen(p, "rb");
+    (*env)->ReleaseStringUTFChars(env, path, p);
+    if (!f) return JNI_FALSE;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    void *b = malloc(n);
+    jboolean ok = JNI_FALSE;
+    if (b && fread(b, 1, n, f) == (size_t)n) ok = p_unser(b, n);
+    fclose(f);
+    free(b);
+    return ok;
+}
+
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_reset(JNIEnv *env, jclass c) {
+    if (p_reset) p_reset();
+}
+
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_setOption(JNIEnv *env, jclass c, jstring k, jstring v) {
+    const char *ks = (*env)->GetStringUTFChars(env, k, NULL);
+    const char *vs = (*env)->GetStringUTFChars(env, v, NULL);
+    int i;
+    for (i = 0; i < nopts; i++) if (!strcmp(opts[i].key, ks)) break;
+    if (i < 16) {
+        if (i == nopts) { snprintf(opts[i].key, sizeof opts[i].key, "%s", ks); nopts++; }
+        snprintf(opts[i].val, sizeof opts[i].val, "%s", vs);
+        opts_dirty = true;
+    }
+    (*env)->ReleaseStringUTFChars(env, k, ks);
+    (*env)->ReleaseStringUTFChars(env, v, vs);
 }
