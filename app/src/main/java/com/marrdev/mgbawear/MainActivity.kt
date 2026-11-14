@@ -71,7 +71,7 @@ fun App(romsDir: File) {
 
     DisposableEffect(Unit) {
         val server = RomServer(romsDir)
-        runCatching { server.start(RomServer.SOCKET_READ_TIMEOUT, false) }
+        runCatching { server.start(5000, false) }
         onDispose { server.stop() }
     }
     LaunchedEffect(Unit) { while (true) { delay(2000); tick++ } }
