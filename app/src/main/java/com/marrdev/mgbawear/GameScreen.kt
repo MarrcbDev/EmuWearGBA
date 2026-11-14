@@ -85,7 +85,7 @@ fun GameScreen(rom: File, onExit: () -> Unit) {
         val ghPx = gwPx * session.srcH / session.srcW
         val leftPx = (wPx - gwPx) / 2f
         val topPx = wPx * Layout.GAME_CY - ghPx / 2f
-        // Superficie del tamaño exacto del juego: el compositor la escala, sin costo para la CPU
+        // Superficie del tamaño exacto del juego: el sistema la escala, casi sin costo para la CPU
         AndroidView(
             factory = { c ->
                 SurfaceView(c).apply {
@@ -96,7 +96,6 @@ fun GameScreen(rom: File, onExit: () -> Unit) {
                     })
                 }
             },
-            update = { it.holder.setFixedSize(session.srcW, session.srcH) },
             modifier = Modifier
                 .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
                 .size(with(density) { gwPx.toDp() }, with(density) { ghPx.toDp() })

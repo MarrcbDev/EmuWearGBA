@@ -2,14 +2,10 @@ package com.marrdev.mgbawear
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.RectF
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Process
-import android.util.Log
 import android.os.SystemClock
 import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
@@ -23,18 +19,19 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
- * Corre el emulador en su propio hilo. El video se dibuja directo a un SurfaceView desde ese hilo
- * (sin pasar por Compose) y el audio bloqueante marca el ritmo (~60 fps).
+ * Corre el emulador en su propio hilo. El core pinta en un framebuffer RGB565 y la capa nativa lo
+ * copia directo al Surface del SurfaceView (el sistema lo escala). El audio va por un anillo a otro hilo.
  */
 class EmuSession(private val ctx: Context, private val rom: File) {
+    /** Solo para miniaturas de estados (se llena con Native.copyFrame). */
     val bmp: Bitmap = Bitmap.createBitmap(240, 160, Bitmap.Config.RGB_565)
     var keys by mutableIntStateOf(0)
     var status by mutableStateOf("Cargando…")
     var toast by mutableStateOf("")
     var fps by mutableIntStateOf(0)
-    /** Tiempo medio por frame en ms: emulación / dibujo / audio (para diagnosticar lentitud). */
+    /** Línea 1 del diagnóstico: tiempos medios por frame (ms) de emulación / presentación / espera. */
     var perf by mutableStateOf("")
-    /** Tiempos medios por frame (ms): emulación / dibujo / espera de audio. */
+    /** Línea 2 del diagnóstico: audio (tasa usada, muestras por frame, descartadas). */
     var diag by mutableStateOf("")
     var srcW by mutableIntStateOf(240)
     var srcH by mutableIntStateOf(160)
@@ -48,10 +45,6 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     private val base = rom.nameWithoutExtension
     private val sav = File(File(ctx.filesDir, "saves").apply { mkdirs() }, "$base.sav").path
     private val statesDir = File(ctx.filesDir, "states").apply { mkdirs() }
-
-    private val src = Rect()
-    private val dst = RectF()
-    private val paint = Paint().apply { isFilterBitmap = false }
 
     fun statePath(slot: Int) = File(statesDir, "$base.$slot.state")
     fun thumbPath(slot: Int) = File(statesDir, "$base.$slot.jpg")
@@ -83,6 +76,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
 
     private fun saveThumb(slot: Int) {
         runCatching {
+            Native.copyFrame(bmp)
             val b = Bitmap.createBitmap(bmp, 0, 0, srcW, srcH)
             thumbPath(slot).outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, 75, it) }
         }
@@ -96,19 +90,6 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     fun stop() {
         running = false
         thread?.join(2000)
-    }
-
-    /** La superficie tiene tamaño fijo (srcW x srcH): copiamos 1:1 y el compositor la escala. */
-    private fun draw() {
-        val h = holder ?: return
-        val c = try { h.lockCanvas() } catch (e: Exception) { null } ?: return
-        try {
-            src.set(0, 0, srcW, srcH)
-            dst.set(0f, 0f, c.width.toFloat(), c.height.toFloat())
-            c.drawBitmap(bmp, src, dst, paint)
-        } finally {
-            try { h.unlockCanvasAndPost(c) } catch (e: Exception) { }
-        }
     }
 
     /** Anillo de audio: el hilo del emulador escribe aquí y un hilo aparte lo vuelca al AudioTrack. */
@@ -169,6 +150,17 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         val frameNs = (1_000_000_000.0 / coreFps).toLong()
         val buf = ShortArray(16384)
 
+        // El Surface se entrega a la capa nativa desde este mismo hilo
+        var attached: SurfaceHolder? = null
+        fun syncSurface() {
+            val h = holder
+            if (h !== attached) {
+                Native.setSurface(h?.surface?.takeIf { it.isValid })
+                attached = h
+                dirty = true
+            }
+        }
+
         var next = System.nanoTime()
         var tSleep = 0L
         fun pace() {
@@ -188,8 +180,9 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         val warmN = 45
         for (i in 0 until warmN) {
             if (!running) break
-            val r = Native.runFrame(bmp, buf, 0)
-            if (r and 0x10000 != 0) draw()
+            syncSurface()
+            val r = Native.runFrame(buf, 0)
+            if (r and 0x10000 != 0) Native.present()
             warmFrames += (r and 0xFFFF) / 2
             pace()
         }
@@ -239,7 +232,8 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                         wasPaused = true
                         Native.writeSave(sav)
                     }
-                    if (dirty) { draw(); dirty = false }
+                    syncSurface()
+                    if (dirty) { Native.present(); dirty = false }
                     Thread.sleep(30)
                     continue
                 }
@@ -254,10 +248,11 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val vol = Settings.volume
                 if (vol != lastVol) { track.setVolume(vol); lastVol = vol }
 
+                syncSurface()
                 val a0 = System.nanoTime()
-                val r = Native.runFrame(bmp, buf, keys and 0xFFFF)
+                val r = Native.runFrame(buf, keys and 0xFFFF)
                 val a1 = System.nanoTime()
-                if (r and 0x10000 != 0) draw()
+                if (r and 0x10000 != 0) Native.present()
                 val a2 = System.nanoTime()
                 val s = r and 0xFFFF
                 if (s > 0) pump.push(buf, s, maxFill)
@@ -272,8 +267,8 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     fps = (frames * 1000L / (now - t0)).toInt()
                     val d = pump.dropped
                     perf = "emu ${tRun / frames / 1_000_000} · dib ${tDraw / frames / 1_000_000} · " +
-                        "esp ${tSleep / frames / 1_000_000} ms\n" +
-                        "$audioInfo · ${shorts / 2 / frames}/f · perd ${(d - lastDrop) / 2}"
+                        "esp ${tSleep / frames / 1_000_000} ms"
+                    diag = "$audioInfo · ${shorts / 2 / frames}/f · perd ${(d - lastDrop) / 2}"
                     lastDrop = d
                     tRun = 0; tDraw = 0; tSleep = 0; shorts = 0
                     frames = 0
@@ -283,6 +278,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
             }
         } finally {
             Native.writeSave(sav)
+            Native.setSurface(null)
             Native.unload()
             pump.quit = true
             pump.active = false
