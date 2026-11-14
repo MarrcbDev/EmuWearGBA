@@ -22,6 +22,11 @@ Importante: este proyecto ahora usa una firma fija (`app/debug.keystore.b64`). L
 tienes que desinstalar la versión anterior (`adb uninstall com.marrdev.mgbawear`; se borran ROMs y partidas).
 Desde ahí, `adb install -r` actualiza sin perder nada.
 
+## Ajustes de rendimiento incluidos
+- El puente JNI se compila con optimización nativa `-O3`, incluso en el APK debug.
+- El hilo del emulador usa prioridad de audio y un búfer de salida más amplio para reducir cortes.
+- El callback de audio informa al core cuántas muestras aceptó realmente, evitando declarar como procesadas muestras descartadas.
+
 ## Si algo falla
 - Logs: `adb logcat -s mgbawear`.
 - Arquitectura del reloj: `adb shell getprop ro.product.cpu.abilist` (los de 32 bits son más lentos).

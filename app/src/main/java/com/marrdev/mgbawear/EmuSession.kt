@@ -113,7 +113,9 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     }
 
     private fun loop() {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
+        // Este hilo alimenta simultáneamente el emulador y AudioTrack; la prioridad
+        // AUDIO reduce el riesgo de underruns (crujidos/cortes) frente a DISPLAY.
+        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         if (!Native.loadCore(ctx.filesDir.path)) { status = "No se pudo cargar el core"; return }
         Settings.pushToCore()
         if (!Native.loadRom(rom.path)) { status = "No se pudo cargar la ROM"; return }
@@ -138,12 +140,12 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                     .build()
             )
-            .setBufferSizeInBytes(maxOf(minBuf, rate / 60 * 4 * 6)) // ~6 frames de colchón contra cortes
+            .setBufferSizeInBytes(maxOf(minBuf * 2, rate / 60 * 4 * 8)) // ~8 frames para evitar underruns
             .build()
         track.play()
         status = ""
 
-        val buf = ShortArray(16384)
+        val buf = ShortArray(32768)
         var n = 0
         var frames = 0
         var t0 = SystemClock.uptimeMillis()
@@ -176,7 +178,11 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val r = Native.runFrame(bmp, buf, keys and 0xFFFF)
                 if (r and 0x10000 != 0) draw()
                 val s = r and 0xFFFF
-                if (s > 0) track.write(buf, 0, s)
+                if (s > 0) {
+                    // WRITE_BLOCKING: no descartar muestras si AudioTrack está momentáneamente lleno.
+                    val written = track.write(buf, 0, s, AudioTrack.WRITE_BLOCKING)
+                    if (written < 0) android.util.Log.w("mgbawear", "AudioTrack.write: $written")
+                }
 
                 frames++
                 val now = SystemClock.uptimeMillis()

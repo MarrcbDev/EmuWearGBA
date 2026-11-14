@@ -11,7 +11,7 @@
 #include "libretro.h"
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "mgbawear", __VA_ARGS__)
-#define AUD_MAX 16384
+#define AUD_MAX 32768 // 16384 frames estéreo: margen para cores que entregan audio en bloques grandes
 
 static void *core;
 static void (*p_set_env)(retro_environment_t);
@@ -115,7 +115,8 @@ static size_t audio_batch_cb(const int16_t *d, size_t frames) {
     if (aud_n + n > AUD_MAX) n = (AUD_MAX - aud_n) & ~1u;
     memcpy(aud + aud_n, d, n * sizeof(int16_t));
     aud_n += (int)n;
-    return frames;
+    // libretro espera el número REAL de frames aceptados, no el solicitado.
+    return n / 2;
 }
 static void poll_cb(void) {}
 static int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id) {
