@@ -6,8 +6,8 @@ plugins {
 android {
     namespace = "com.marrdev.mgbawear"
     compileSdk = 34
-    // En GitHub Actions usamos el NDK preinstalado del runner
-    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { ndkPath = it }
+    // En GitHub Actions usamos la versión del NDK preinstalada en el runner
+    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { ndkVersion = File(it).name }
 
     defaultConfig {
         applicationId = "com.marrdev.mgbawear"
