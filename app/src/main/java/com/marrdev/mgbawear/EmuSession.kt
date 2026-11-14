@@ -117,6 +117,42 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         }
     }
 
+    /** Anillo de audio: el hilo del emulador escribe aquí y un hilo aparte lo vuelca al AudioTrack. */
+    private class AudioPump(val track: AudioTrack) : Thread("audio") {
+        private val cap = 1 shl 16
+        private val ring = ShortArray(cap)
+        private var rd = 0
+        private var wr = 0
+        private val lock = Object()
+        @Volatile var active = true
+        @Volatile var quit = false
+        @Volatile var dropped = 0
+
+        fun clear() = synchronized(lock) { rd = wr }
+
+        fun push(src: ShortArray, n: Int, maxFill: Int) = synchronized(lock) {
+            if (wr - rd + n > maxFill) { dropped += n; return@synchronized }
+            for (i in 0 until n) ring[(wr + i) and (cap - 1)] = src[i]
+            wr += n
+        }
+
+        override fun run() {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+            val chunk = ShortArray(1024) // 512 frames ≈ 15 ms
+            while (!quit) {
+                if (!active) { sleep(15); continue }
+                val got = synchronized(lock) {
+                    val a = minOf(wr - rd, chunk.size)
+                    for (i in 0 until a) chunk[i] = ring[(rd + i) and (cap - 1)]
+                    rd += a
+                    a
+                }
+                if (got < chunk.size) chunk.fill(0, got, chunk.size) // subdesborde: silencio, no tirones de ritmo
+                track.write(chunk, 0, chunk.size)
+            }
+        }
+    }
+
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
         if (!Native.loadCore(ctx.filesDir.path)) { status = "No se pudo cargar el core"; return }
@@ -127,6 +163,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         val rate = av[1].toInt().coerceAtLeast(8000)
         srcW = av[2].toInt().coerceIn(1, 240)
         srcH = av[3].toInt().coerceIn(1, 160)
+        val frameNs = (1_000_000_000.0 / av[0].coerceIn(30.0, 120.0)).toLong()
 
         val minBuf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
         val track = AudioTrack.Builder()
@@ -143,27 +180,31 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                     .build()
             )
-            .setBufferSizeInBytes(maxOf(minBuf, rate / 60 * 4 * 6)) // ~6 frames de colchón contra cortes
+            .setBufferSizeInBytes(maxOf(minBuf, 1024 * 2 * 4))
             .build()
+        val pump = AudioPump(track)
         track.play()
+        pump.start()
         status = ""
 
+        val maxFill = rate / 10 * 2 // ~100 ms de audio como máximo en el anillo (en shorts estéreo)
         val buf = ShortArray(16384)
         var n = 0
         var frames = 0
         var t0 = SystemClock.uptimeMillis()
         var lastVol = -1f
         var wasPaused = false
-        var tRun = 0L
-        var tDraw = 0L
-        var tAud = 0L
+        var tRun = 0L; var tDraw = 0L; var tSleep = 0L; var shorts = 0L
+        var lastDrop = 0
+        var next = System.nanoTime()
         try {
             while (running) {
                 while (true) { (queue.poll() ?: break).invoke() }
 
                 if (paused) {
                     if (!wasPaused) {
-                        track.pause(); track.flush()
+                        pump.active = false
+                        track.pause(); track.flush(); pump.clear()
                         wasPaused = true
                         Native.writeSave(sav)
                     }
@@ -172,33 +213,45 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     continue
                 }
                 if (wasPaused) {
-                    track.play()
+                    pump.clear(); track.play(); pump.active = true
                     wasPaused = false
                     frames = 0
                     t0 = SystemClock.uptimeMillis()
+                    next = System.nanoTime()
                 }
 
                 val vol = Settings.volume
                 if (vol != lastVol) { track.setVolume(vol); lastVol = vol }
 
-                val a = System.nanoTime()
+                val a0 = System.nanoTime()
                 val r = Native.runFrame(bmp, buf, keys and 0xFFFF)
-                val b = System.nanoTime()
+                val a1 = System.nanoTime()
                 if (r and 0x10000 != 0) draw()
-                val c = System.nanoTime()
+                val a2 = System.nanoTime()
                 val s = r and 0xFFFF
-                if (s > 0) track.write(buf, 0, s)
-                val d = System.nanoTime()
-                tRun += b - a; tDraw += c - b; tAud += d - c
+                if (s > 0) pump.push(buf, s, maxFill)
+                shorts += s
+                tRun += a1 - a0; tDraw += a2 - a1
+
+                // Ritmo por reloj (a los fps que declara el core), independiente del audio
+                next += frameNs
+                val wait = next - System.nanoTime()
+                if (wait > 0) {
+                    tSleep += wait
+                    Thread.sleep(wait / 1_000_000, (wait % 1_000_000).toInt())
+                } else if (wait < -100_000_000L) {
+                    next = System.nanoTime()
+                }
 
                 frames++
                 val now = SystemClock.uptimeMillis()
                 if (now - t0 >= 1000) {
                     fps = (frames * 1000L / (now - t0)).toInt()
-                    val f = maxOf(frames, 1)
-                    diag = "emu ${tRun / f / 100000 / 10.0} · dib ${tDraw / f / 100000 / 10.0} · aud ${tAud / f / 100000 / 10.0} ms"
-                    Log.i("mgbawear", "fps=$fps $diag")
-                    tRun = 0; tDraw = 0; tAud = 0
+                    val d = pump.dropped
+                    perf = "emu ${tRun / frames / 1_000_000}ms · dib ${tDraw / frames / 1_000_000}ms · " +
+                        "esp ${tSleep / frames / 1_000_000}ms · aud ${shorts / 2 / frames}/f · perd ${(d - lastDrop) / 2}"
+                    lastDrop = d
+                    tRun = 0; tDraw = 0; tSleep = 0; shorts = 0
                     frames = 0
                     t0 = now
                 }
@@ -207,7 +260,10 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         } finally {
             Native.writeSave(sav)
             Native.unload()
-            track.stop()
+            pump.quit = true
+            pump.active = false
+            track.pause(); track.flush()
+            pump.join(500)
             track.release()
         }
     }
