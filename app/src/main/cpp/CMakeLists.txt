@@ -15,4 +15,3 @@ target_compile_options(mgbajni PRIVATE
 )
 target_link_options(mgbajni PRIVATE -Wl,--gc-sections)
 
-target_compile_options(mgbajni PRIVATE -march=armv8-a)

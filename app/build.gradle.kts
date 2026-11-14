@@ -13,9 +13,9 @@ android {
         applicationId = "com.marrdev.mgbawear"
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        versionCode = 2
+        versionName = "0.2"
+        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
     signingConfigs {
         // Firma fija para que cada APK nuevo se pueda instalar encima del anterior

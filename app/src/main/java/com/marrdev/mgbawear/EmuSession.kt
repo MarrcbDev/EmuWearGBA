@@ -45,7 +45,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     private var thread: Thread? = null
     private var audioThread: Thread? = null
     private val audioRunning = AtomicBoolean(false)
-    private val audioQueue = ArrayBlockingQueue<ShortArray>(8)
+    private val audioQueue = ArrayBlockingQueue<ShortArray>(4)
 
     private val base = rom.nameWithoutExtension
     private val sav = File(File(ctx.filesDir, "saves").apply { mkdirs() }, "$base.sav").path
@@ -150,7 +150,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                     .build()
             )
             // Búfer moderado: suficiente para el reloj sin añadir demasiada latencia.
-            .setBufferSizeInBytes(maxOf(minBuf * 2, rate / 12 * 4))
+            .setBufferSizeInBytes(maxOf(if (minBuf > 0) minBuf else 0, rate / 10 * 4))
             .build()
         audioQueue.clear()
         track.setVolume(Settings.volume)
@@ -213,9 +213,13 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val s = r and 0xFFFF
                 if (s > 0) {
                     val chunk = buf.copyOf(s)
-                    // La cola desacopla el audio del hilo de emulación. Si el reloj se atrasa,
-                    // se descarta el bloque más antiguo para no acumular latencia infinita.
-                    if (!audioQueue.offer(chunk)) { audioQueue.poll(); audioQueue.offer(chunk) }
+                    // No descartar bloques: perder muestras entre frames genera clics,
+                    // cortes y artefactos. La cola aplica back-pressure si AudioTrack se atrasa.
+                    try {
+                        audioQueue.put(chunk)
+                    } catch (_: InterruptedException) {
+                        if (!running) break
+                    }
                 }
 
                 // Ritmo del core: no dejar que la CPU genere frames ilimitados.

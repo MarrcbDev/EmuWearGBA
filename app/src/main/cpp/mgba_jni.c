@@ -107,9 +107,10 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     }
 }
 
-// Atenuación conservadora para evitar clipping en la salida del reloj/auriculares.
+// Headroom digital antes de entregar PCM a Android. No se modifica el
+// formato ni la frecuencia de muestreo: solo se evita llegar al techo de int16.
 static inline int16_t safe_sample(int16_t v) {
-    return (int16_t)(((int32_t)v * 70) / 100);
+    return (int16_t)(((int32_t)v * 60) / 100);
 }
 static void audio_cb(int16_t l, int16_t r) {
     if (aud_n + 2 <= AUD_MAX) { aud[aud_n++] = safe_sample(l); aud[aud_n++] = safe_sample(r); }
