@@ -35,6 +35,12 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     var status by mutableStateOf("Cargando…")
     var toast by mutableStateOf("")
     var fps by mutableIntStateOf(0)
+    // Diagnóstico temporal: separa coste del core, dibujo, espera de audio y underruns.
+    var coreMs by mutableIntStateOf(0)
+    var drawMs by mutableIntStateOf(0)
+    var audioWaitMs by mutableIntStateOf(0)
+    var audioUnderruns by mutableIntStateOf(0)
+    var audioPeak by mutableIntStateOf(0)
     @Volatile var srcW = 240
     @Volatile var srcH = 160
     @Volatile var holder: SurfaceHolder? = null
@@ -104,6 +110,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
     }
 
     private fun draw() {
+        val started = System.nanoTime()
         val h = holder ?: return
         val c = try { h.lockHardwareCanvas() } catch (e: Exception) { null } ?: return
         try {
@@ -118,6 +125,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
             c.drawBitmap(bmp, src, dst, paint)
         } finally {
             try { h.unlockCanvasAndPost(c) } catch (e: Exception) { }
+            drawMs = ((System.nanoTime() - started) / 1_000_000L).toInt()
         }
     }
 
@@ -208,15 +216,22 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val vol = Settings.volume
                 if (vol != lastVol) { track.setVolume(vol); lastVol = vol }
 
+                val coreStarted = System.nanoTime()
                 val r = Native.runFrame(bmp, buf, keys and 0xFFFF)
+                coreMs = ((System.nanoTime() - coreStarted) / 1_000_000L).toInt()
                 if (r and 0x10000 != 0) draw()
                 val s = r and 0xFFFF
                 if (s > 0) {
+                    var peak = 0
+                    for (i in 0 until s) { val v = kotlin.math.abs(buf[i].toInt()); if (v > peak) peak = v }
+                    audioPeak = peak
                     val chunk = buf.copyOf(s)
                     // No descartar bloques: perder muestras entre frames genera clics,
                     // cortes y artefactos. La cola aplica back-pressure si AudioTrack se atrasa.
                     try {
+                        val waitStarted = System.nanoTime()
                         audioQueue.put(chunk)
+                        audioWaitMs = ((System.nanoTime() - waitStarted) / 1_000_000L).toInt()
                     } catch (_: InterruptedException) {
                         if (!running) break
                     }
@@ -227,6 +242,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 val wait = nextFrame - System.nanoTime()
                 if (wait > 0) LockSupport.parkNanos(wait) else if (wait < -frameNanos * 3) nextFrame = System.nanoTime()
 
+                runCatching { audioUnderruns = track.underrunCount }
                 frames++
                 val now = SystemClock.uptimeMillis()
                 if (now - t0 >= 1000) {

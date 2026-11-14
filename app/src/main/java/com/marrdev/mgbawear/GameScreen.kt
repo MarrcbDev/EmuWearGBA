@@ -145,8 +145,10 @@ private fun Controls(session: EmuSession, enabled: Boolean, onPause: () -> Unit)
             }
         }
         if (Settings.showFps) {
-            val t = measurer.measure("${session.fps} fps", fpsStyle)
-            drawText(t, topLeft = Offset((w - t.size.width) / 2f, w * 0.135f))
+            val line1 = measurer.measure("${session.fps} fps  C:${session.coreMs}ms  D:${session.drawMs}ms", fpsStyle)
+            val line2 = measurer.measure("A:${session.audioWaitMs}ms  U:${session.audioUnderruns}  P:${session.audioPeak}", fpsStyle)
+            drawText(line1, topLeft = Offset((w - line1.size.width) / 2f, w * 0.125f))
+            drawText(line2, topLeft = Offset((w - line2.size.width) / 2f, w * 0.155f))
         }
     }
 }
