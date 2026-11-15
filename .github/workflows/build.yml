@@ -2,7 +2,11 @@ name: build-apk
 on:
   push:
     branches: [main, master]
+    tags: ['v*']          # al subir una etiqueta (v1.0.0, v1.1.0…) también se crea un Release
   workflow_dispatch:
+
+permissions:
+  contents: write         # necesario para crear el Release
 
 jobs:
   apk:
@@ -61,3 +65,13 @@ jobs:
         with:
           name: EmuWearGBA-apk
           path: app/build/outputs/apk/release/app-release.apk
+
+      - name: Preparar APK para el Release
+        run: cp app/build/outputs/apk/release/app-release.apk EmuWearGBA.apk
+
+      - name: Publicar Release con el APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EmuWearGBA.apk
+          generate_release_notes: true

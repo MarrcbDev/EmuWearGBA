@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -36,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -53,6 +56,10 @@ import androidx.wear.compose.material.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import java.io.File
 import java.net.Inet4Address
 
@@ -253,8 +260,13 @@ fun UploadScreen(ip: String?) {
                     )
                 }
             } else {
-                item { Text("1. Pon el teléfono en la misma red Wi-Fi", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center) }
-                item { Text("2. Abre en su navegador:", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center) }
+                item {
+                    Text(
+                        "Con el teléfono en la misma red Wi-Fi, escanea el código o abre la dirección:",
+                        style = MaterialTheme.typography.body2, textAlign = TextAlign.Center
+                    )
+                }
+                item { QrCode("http://$ip:8080", Modifier.size(124.dp)) }
                 item {
                     Text(
                         "http://$ip:8080",
@@ -264,9 +276,34 @@ fun UploadScreen(ip: String?) {
                 }
                 item {
                     Text(
-                        "3. Suelta tus .gba, .gb o .gbc (y carátulas o .sav si quieres)",
-                        style = MaterialTheme.typography.body2, textAlign = TextAlign.Center
+                        "Suelta tus .gba, .gb o .gbc (y carátulas o .sav si quieres)",
+                        style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center,
+                        color = Color(0xFFB8BCCB)
                     )
+                }
+            }
+        }
+    }
+}
+
+/** Código QR dibujado con ZXing (negro sobre fondo blanco para que cualquier cámara lo lea). */
+@Composable
+fun QrCode(text: String, modifier: Modifier = Modifier) {
+    val matrix = remember(text) {
+        runCatching {
+            QRCodeWriter().encode(
+                text, BarcodeFormat.QR_CODE, 0, 0,
+                mapOf(EncodeHintType.MARGIN to 0, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M)
+            )
+        }.getOrNull()
+    }
+    Canvas(modifier.background(Color.White, RoundedCornerShape(12.dp)).padding(8.dp)) {
+        val mx = matrix ?: return@Canvas
+        val cell = size.width / mx.width
+        for (y in 0 until mx.height) {
+            for (x in 0 until mx.width) {
+                if (mx.get(x, y)) {
+                    drawRect(Color.Black, Offset(x * cell, y * cell), Size(cell + 0.6f, cell + 0.6f))
                 }
             }
         }
