@@ -7,9 +7,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/** Ajustes globales, guardados en SharedPreferences. Cada opción se cicla con un toque. */
+/** Ajustes globales (SharedPreferences). Cada opción se cicla con un toque. */
 object Settings {
     private var prefs: SharedPreferences? = null
+    var isWatch = false; private set
 
     val volumeOptions = listOf(20, 40, 60, 80, 100)
     val frameskipOptions = listOf(0, 1, 2, 3)
@@ -18,41 +19,53 @@ object Settings {
     val btnSizeValues = listOf(0.85f, 1f, 1.15f)
     val screenLabels = listOf("Normal", "Grande")
     val screenValues = listOf(0.693f, 0.77f)
+    val controlLabels = listOf("Cruceta", "Joystick")
+    val hwLabels = listOf("Desactivado", "Botón A", "Botón B")
+    val speedLabels = listOf("1x (60 fps)", "Libre (sin límite)")
 
     var volumeIdx by mutableIntStateOf(2); private set
     var frameskipIdx by mutableIntStateOf(0); private set
     var opacityIdx by mutableIntStateOf(1); private set
     var btnSizeIdx by mutableIntStateOf(1); private set
     var screenIdx by mutableIntStateOf(0); private set
+    var controlIdx by mutableIntStateOf(0); private set
+    var hwIdx by mutableIntStateOf(0); private set
+    var speedIdx by mutableIntStateOf(0); private set
     var showFps by mutableStateOf(true); private set
     var colorFix by mutableStateOf(false); private set
-    var showDiag by mutableStateOf(true); private set
 
     val volume: Float get() = volumeOptions[volumeIdx] / 100f
     val frameskip: Int get() = frameskipOptions[frameskipIdx]
     val opacity: Float get() = opacityOptions[opacityIdx] / 100f
     val btnScale: Float get() = btnSizeValues[btnSizeIdx]
     val screenW: Float get() = screenValues[screenIdx]
+    /** En modo libre no se limita el ritmo: el juego corre tan rápido como pueda el dispositivo (sin audio). */
+    val turbo: Boolean get() = speedIdx == 1
 
     fun init(ctx: Context) {
+        isWatch = ctx.packageManager.hasSystemFeature("android.hardware.type.watch")
         val p = ctx.getSharedPreferences("emuwear", Context.MODE_PRIVATE)
         prefs = p
         volumeIdx = p.getInt("volume", 2).coerceIn(0, volumeOptions.lastIndex)
         frameskipIdx = p.getInt("frameskip", 0).coerceIn(0, frameskipOptions.lastIndex)
         opacityIdx = p.getInt("opacity", 1).coerceIn(0, opacityOptions.lastIndex)
         btnSizeIdx = p.getInt("btnsize", 1).coerceIn(0, btnSizeValues.lastIndex)
-        screenIdx = p.getInt("screen", 0).coerceIn(0, screenValues.lastIndex)
+        // Por defecto: pantalla normal en el reloj y grande en el teléfono
+        screenIdx = p.getInt("screen", if (isWatch) 0 else 1).coerceIn(0, screenValues.lastIndex)
+        controlIdx = p.getInt("control", 0).coerceIn(0, controlLabels.lastIndex)
+        hwIdx = p.getInt("hw", 0).coerceIn(0, hwLabels.lastIndex)
+        speedIdx = p.getInt("speed", 0).coerceIn(0, speedLabels.lastIndex)
         showFps = p.getBoolean("fps", true)
         colorFix = p.getBoolean("color", false)
-        showDiag = p.getBoolean("diag", true)
     }
 
     private fun save() {
         prefs?.edit()
             ?.putInt("volume", volumeIdx)?.putInt("frameskip", frameskipIdx)
             ?.putInt("opacity", opacityIdx)?.putInt("btnsize", btnSizeIdx)
-            ?.putInt("screen", screenIdx)?.putBoolean("fps", showFps)
-            ?.putBoolean("color", colorFix)?.putBoolean("diag", showDiag)?.apply()
+            ?.putInt("screen", screenIdx)?.putInt("control", controlIdx)
+            ?.putInt("hw", hwIdx)?.putInt("speed", speedIdx)
+            ?.putBoolean("fps", showFps)?.putBoolean("color", colorFix)?.apply()
     }
 
     fun cycleVolume() { volumeIdx = (volumeIdx + 1) % volumeOptions.size; save() }
@@ -60,9 +73,11 @@ object Settings {
     fun cycleOpacity() { opacityIdx = (opacityIdx + 1) % opacityOptions.size; save() }
     fun cycleBtnSize() { btnSizeIdx = (btnSizeIdx + 1) % btnSizeValues.size; save() }
     fun cycleScreen() { screenIdx = (screenIdx + 1) % screenValues.size; save() }
+    fun cycleControl() { controlIdx = (controlIdx + 1) % controlLabels.size; save() }
+    fun cycleHw() { hwIdx = (hwIdx + 1) % hwLabels.size; save() }
+    fun cycleSpeed() { speedIdx = (speedIdx + 1) % speedLabels.size; save() }
     fun toggleFps() { showFps = !showFps; save() }
     fun toggleColor() { colorFix = !colorFix; save() }
-    fun toggleDiag() { showDiag = !showDiag; save() }
 
     /** Opciones del core de mGBA (nombres de las variables libretro). */
     fun pushToCore() {

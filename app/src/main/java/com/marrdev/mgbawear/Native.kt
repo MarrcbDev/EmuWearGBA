@@ -8,20 +8,20 @@ object Native {
 
     @JvmStatic external fun loadCore(dir: String): Boolean
     @JvmStatic external fun loadRom(path: String): Boolean
-    /** [fps, sampleRate, ancho, alto] según el core */
+    /** [fps, sampleRate, ancho, alto] */
     @JvmStatic external fun avInfo(): DoubleArray
-    /** Ejecuta un frame. Devuelve (shorts de audio) | 0x10000 si hay un frame nuevo. */
-    @JvmStatic external fun runFrame(audio: ShortArray, keys: Int): Int
-    /** Surface donde se presenta el video (null = ninguna). Llamar desde el hilo del emulador. */
     @JvmStatic external fun setSurface(surface: Surface?)
+    /** Ejecuta un frame. Devuelve shorts de audio | 0x10000 si hay frame nuevo para present(). */
+    @JvmStatic external fun runFrame(audio: ShortArray, keys: Int): Int
     @JvmStatic external fun present()
-    /** Copia el último frame a un Bitmap RGB_565 (miniaturas de estados). */
-    @JvmStatic external fun copyFrame(bmp: Bitmap)
+    @JvmStatic external fun copyFrame(dst: Bitmap)
     @JvmStatic external fun loadSave(path: String)
     @JvmStatic external fun writeSave(path: String)
     @JvmStatic external fun saveState(path: String): Boolean
     @JvmStatic external fun loadState(path: String): Boolean
     @JvmStatic external fun reset()
     @JvmStatic external fun setOption(key: String, value: String)
+    @JvmStatic external fun cheatReset()
+    @JvmStatic external fun cheatSet(index: Int, enabled: Boolean, code: String)
     @JvmStatic external fun unload()
 }

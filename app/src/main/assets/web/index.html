@@ -50,6 +50,12 @@ header p{margin:2px 0 0;color:var(--mut);font-size:14px}
 .empty{padding:34px;text-align:center;color:var(--mut)}
 #toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,120px);background:#1f2540;border:1px solid var(--line);padding:12px 18px;border-radius:14px;transition:.3s;font-size:14px;z-index:9;max-width:90vw}
 #toast.show{transform:translate(-50%,0)}
+.modal{position:fixed;inset:0;background:rgba(5,8,18,.7);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+.mbox{width:min(520px,100%);max-height:88vh;overflow:auto;padding:18px;display:grid;gap:12px}
+.mhead{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.addbox{display:grid;gap:8px}
+.addbox input,.addbox textarea{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:10px;font:inherit}
+.cheat{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px}
 </style>
 </head>
 <body>
@@ -73,6 +79,15 @@ header p{margin:2px 0 0;color:var(--mut);font-size:14px}
   </div>
   <div id="lib" class="grid"></div>
 </div>
+<div id="cgModal" class="modal"><div class="card mbox">
+  <div class="mhead"><b id="cgTitle"></b><button class="btn ghost sm" onclick="closeCheats()">Cerrar</button></div>
+  <div id="cgList" style="display:grid;gap:8px"></div>
+  <div class="addbox">
+    <input id="cgName" placeholder="Nombre (p. ej. Vidas infinitas)">
+    <textarea id="cgCode" rows="3" placeholder="Código(s) GameShark / Action Replay, uno por línea"></textarea>
+    <button class="btn" onclick="addCheat()">Añadir truco</button>
+  </div>
+</div></div>
 <div id="toast"></div>
 <input id="coverPick" type="file" accept="image/*" hidden>
 
@@ -158,6 +173,7 @@ async function load(){
       ?h('div',{class:'cov'},h('img',{src:'/cover?name='+enc(g.name)+'&v='+g.cover_v,alt:''}))
       :h('div',{class:'cov',style:'background:linear-gradient(135deg,hsl('+hue(g.name)+' 55% 42%),hsl('+((hue(g.name)+60)%360)+' 60% 28%))'},g.name.charAt(0).toUpperCase());
     const acts=h('div',{class:'acts'},
+      h('button',{class:'btn ghost sm',onclick:()=>openCheats(g)},'🎲 Trucos'),
       h('button',{class:'btn ghost sm',onclick:()=>pickCover(g)},'🖼 Carátula'),
       g.sav?h('a',{class:'btn ghost sm',href:'/sav?name='+enc(g.name),style:'text-decoration:none'},'💾 Partida'):null,
       h('button',{class:'btn danger sm',onclick:()=>del(g)},'🗑')
@@ -196,6 +212,29 @@ $('#btnCovers').addEventListener('click',async()=>{
   setTimeout(load,5000);setTimeout(load,12000);
 });
 load();
+let CG=null;
+function openCheats(g){CG=g;$('#cgTitle').textContent=g.name;$('#cgModal').style.display='flex';renderCheats()}
+function closeCheats(){$('#cgModal').style.display='none';load()}
+async function renderCheats(){
+  const L=await (await fetch('/api/cheats?rom='+enc(CG.name))).json();
+  const box=$('#cgList');box.textContent='';
+  if(!L.length)box.append(h('div',{class:'empty'},'Sin trucos todavía.'));
+  for(const c of L){
+    box.append(h('div',{class:'cheat card'},
+      h('div',{style:'flex:1;min-width:0'},
+        h('div',{style:'font-weight:600'},c.name),
+        h('div',{style:'color:var(--mut);font-size:12px;word-break:break-all'},c.code)),
+      h('button',{class:'btn ghost sm',onclick:async()=>{await fetch('/cheat-toggle?rom='+enc(CG.name)+'&i='+c.id+'&on='+(c.on?0:1),{method:'POST'});renderCheats()}},c.on?'ON':'OFF'),
+      h('button',{class:'btn danger sm',onclick:async()=>{await fetch('/cheat-del?rom='+enc(CG.name)+'&i='+c.id,{method:'POST'});renderCheats()}},'🗑')));
+  }
+}
+async function addCheat(){
+  const n=$('#cgName').value.trim()||'Truco',c=$('#cgCode').value.trim();
+  if(!c){toast('Escribe el código');return}
+  const r=await fetch('/cheat-add?rom='+enc(CG.name)+'&name='+enc(n),{method:'POST',body:c});
+  if(!r.ok){toast('No se pudo añadir el truco');return}
+  $('#cgName').value='';$('#cgCode').value='';renderCheats();
+}
 </script>
 </body>
 </html>

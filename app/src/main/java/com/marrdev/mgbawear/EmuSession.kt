@@ -82,6 +82,24 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         }
     }
 
+    private fun applyCheats(list: List<Cheats.Cheat>) {
+        Native.cheatReset()
+        for (c in list) Native.cheatSet(c.id, c.on, c.code)
+    }
+
+    /** Activa o desactiva un truco (se ejecuta en el hilo del emulador). */
+    fun setCheat(i: Int, on: Boolean) = post {
+        val l = Cheats.load(ctx, base).toMutableList()
+        if (i in l.indices) {
+            l[i] = l[i].copy(on = on)
+            Cheats.save(ctx, base, l)
+        }
+        applyCheats(Cheats.load(ctx, base))
+        toast = if (on) "Truco activado" else "Truco desactivado"
+    }
+
+    fun cheats(): List<Cheats.Cheat> = Cheats.load(ctx, base)
+
     fun start() {
         running = true
         thread = Thread({ loop() }, "emu").also { it.start() }
@@ -142,6 +160,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         Settings.pushToCore()
         if (!Native.loadRom(rom.path)) { status = "No se pudo cargar la ROM"; return }
         Native.loadSave(sav)
+        applyCheats(Cheats.load(ctx, base))
         val av = Native.avInfo()
         val declared = av[1].toInt().coerceAtLeast(8000)
         srcW = av[2].toInt().coerceIn(1, 240)
@@ -250,16 +269,16 @@ class EmuSession(private val ctx: Context, private val rom: File) {
 
                 syncSurface()
                 val a0 = System.nanoTime()
-                val r = Native.runFrame(buf, keys and 0xFFFF)
+                val r = Native.runFrame(buf, (keys or Input.hwMask) and 0xFFFF)
                 val a1 = System.nanoTime()
                 if (r and 0x10000 != 0) Native.present()
                 val a2 = System.nanoTime()
                 val s = r and 0xFFFF
-                if (s > 0) pump.push(buf, s, maxFill)
+                if (s > 0 && !Settings.turbo) pump.push(buf, s, maxFill)
                 shorts += s
                 tRun += a1 - a0; tDraw += a2 - a1
 
-                pace() // ritmo por reloj (fps del core), independiente del audio
+                if (!Settings.turbo) pace() // ritmo por reloj (fps del core), independiente del audio
 
                 frames++
                 val now = SystemClock.uptimeMillis()

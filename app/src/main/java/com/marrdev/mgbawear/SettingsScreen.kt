@@ -38,7 +38,7 @@ fun OptionChip(label: String, value: String, onClick: () -> Unit) {
     )
 }
 
-/** Pantalla de ajustes. Si [session] no es null (en pleno juego), aplica los cambios al emulador al instante. */
+/** Ajustes. Con [session] no nulo (en pleno juego) los cambios se aplican al emulador al instante. */
 @Composable
 fun SettingsList(session: EmuSession?, onBack: () -> Unit) {
     fun changed() { session?.applySettings(); session?.redraw() }
@@ -51,6 +51,9 @@ fun SettingsList(session: EmuSession?, onBack: () -> Unit) {
     ) {
         item { Text("Ajustes", style = MaterialTheme.typography.title3, color = Accent) }
         item { OptionChip("Volumen", "${Settings.volumeOptions[Settings.volumeIdx]}%") { Settings.cycleVolume() } }
+        item { OptionChip("Control", Settings.controlLabels[Settings.controlIdx]) { Settings.cycleControl(); changed() } }
+        item { OptionChip("Back como A/B", Settings.hwLabels[Settings.hwIdx]) { Settings.cycleHw(); changed() } }
+        item { OptionChip("Velocidad", Settings.speedLabels[Settings.speedIdx]) { Settings.cycleSpeed(); changed() } }
         item {
             OptionChip(
                 "Salto de frames",
@@ -58,7 +61,6 @@ fun SettingsList(session: EmuSession?, onBack: () -> Unit) {
             ) { Settings.cycleFrameskip(); changed() }
         }
         item { OptionChip("Mostrar FPS", if (Settings.showFps) "Sí" else "No") { Settings.toggleFps() } }
-        item { OptionChip("Diagnóstico", if (Settings.showDiag) "Sí" else "No") { Settings.toggleDiag() } }
         item {
             OptionChip("Colores GBA", if (Settings.colorFix) "Activados" else "Desactivados") {
                 Settings.toggleColor(); changed()

@@ -48,6 +48,10 @@ class RomServer(private val ctx: Context, port: Int = 8080) : NanoHTTPD(port) {
             post && s.uri == "/cover" -> uploadCover(s)
             post && s.uri == "/delete" -> delete(s)
             post && s.uri == "/fetch-covers" -> fetchCovers()
+            get && s.uri == "/api/cheats" -> cheatsJson(s)
+            post && s.uri == "/cheat-add" -> cheatAdd(s)
+            post && s.uri == "/cheat-toggle" -> cheatToggle(s)
+            post && s.uri == "/cheat-del" -> cheatDel(s)
             else -> text(Response.Status.NOT_FOUND, "no encontrado")
         }
     }
@@ -142,6 +146,51 @@ class RomServer(private val ctx: Context, port: Int = 8080) : NanoHTTPD(port) {
         val f = File(romsDir, File(s.parms["file"] ?: "").name)
         if (!f.exists()) return text(Response.Status.NOT_FOUND, "no existe")
         Covers.deleteRom(ctx, f)
+        return ok()
+    }
+
+    private fun romBase(s: IHTTPSession): String = File(s.parms["rom"] ?: "").name
+
+    private fun cheatsJson(s: IHTTPSession): Response {
+        val arr = JSONArray()
+        for (c in Cheats.load(ctx, romBase(s))) {
+            arr.put(JSONObject().put("id", c.id).put("name", c.name).put("code", c.code).put("on", c.on))
+        }
+        return newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", arr.toString())
+    }
+
+    /** POST /cheat-add?rom=X&name=N con el código en el cuerpo (una línea por parte del código). */
+    private fun cheatAdd(s: IHTTPSession): Response {
+        val base = romBase(s)
+        if (base.isEmpty()) return text(Response.Status.BAD_REQUEST, "Falta el juego")
+        val map = HashMap<String, String>()
+        s.parseBody(map)
+        val code = (map["postData"] ?: "").trim()
+        if (code.isEmpty()) return text(Response.Status.BAD_REQUEST, "Falta el código")
+        val name = (s.parms["name"] ?: "").trim().ifEmpty { "Truco" }
+        val list = Cheats.load(ctx, base).toMutableList()
+        list.add(Cheats.Cheat(list.size, name, code, true))
+        Cheats.save(ctx, base, list)
+        return ok()
+    }
+
+    private fun cheatToggle(s: IHTTPSession): Response {
+        val base = romBase(s)
+        val i = s.parms["i"]?.toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "Falta i")
+        val list = Cheats.load(ctx, base).toMutableList()
+        if (i !in list.indices) return text(Response.Status.NOT_FOUND, "no existe")
+        list[i] = list[i].copy(on = s.parms["on"] == "1")
+        Cheats.save(ctx, base, list)
+        return ok()
+    }
+
+    private fun cheatDel(s: IHTTPSession): Response {
+        val base = romBase(s)
+        val i = s.parms["i"]?.toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "Falta i")
+        val list = Cheats.load(ctx, base).toMutableList()
+        if (i !in list.indices) return text(Response.Status.NOT_FOUND, "no existe")
+        list.removeAt(i)
+        Cheats.save(ctx, base, list.mapIndexed { idx, c -> c.copy(id = idx) })
         return ok()
     }
 

@@ -18,6 +18,10 @@ Emulador de **Game Boy Advance** (y Game Boy / Game Boy Color) para relojes **We
 - 🔋 **Partida guardada automática** (la de la batería del cartucho, `.sav`): cada ~30 s, al pausar y al salir.
 - ⚙️ **Ajustes**: volumen, salto de frames, FPS en pantalla, diagnóstico, colores GBA, tamaño de pantalla, tamaño y opacidad de botones.
 - 🌐 **Página web** vistosa para gestionar la biblioteca: subir ROMs, carátulas y partidas, descargar partidas, borrar juegos.
+- 🕹️ **Cruceta o joystick** en pantalla, a elegir en Ajustes.
+- 🔘 **Botón físico Back como A o B** (en relojes con dos botones). El botón Home lo reserva el sistema y no se puede usar.
+- 🎲 **Trucos por código** (GameShark / Action Replay): se agregan desde la web del reloj y se activan o desactivan en el menú de pausa.
+- 🚀 **Velocidad libre**: quita el límite de 60 fps para ver hasta dónde llega tu dispositivo (sin audio).
 - ⏸️ **Pausa automática** si sales de la app o se apaga la pantalla.
 
 ## Instalación

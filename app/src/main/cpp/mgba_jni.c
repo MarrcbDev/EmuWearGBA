@@ -35,6 +35,8 @@ static size_t (*p_ser_size)(void);
 static bool (*p_ser)(void *, size_t);
 static bool (*p_unser)(const void *, size_t);
 static void (*p_reset)(void);
+static void (*p_cheat_reset)(void);
+static void (*p_cheat_set)(unsigned, bool, const char *);
 
 static char sysdir[512];
 static unsigned pixfmt = RETRO_PIXEL_FORMAT_0RGB1555;
@@ -151,6 +153,8 @@ Java_com_marrdev_mgbawear_Native_loadCore(JNIEnv *env, jclass c, jstring dir) {
     *(void **)&p_ser = dlsym(core, "retro_serialize");
     *(void **)&p_unser = dlsym(core, "retro_unserialize");
     *(void **)&p_reset = dlsym(core, "retro_reset");
+    *(void **)&p_cheat_reset = dlsym(core, "retro_cheat_reset");
+    *(void **)&p_cheat_set = dlsym(core, "retro_cheat_set");
     if (!p_set_env || !p_init || !p_load_game || !p_run || !p_av) { LOGE("simbolos libretro incompletos"); return JNI_FALSE; }
     p_set_env(env_cb);
     p_set_video(video_cb);
@@ -321,4 +325,19 @@ Java_com_marrdev_mgbawear_Native_unload(JNIEnv *env, jclass c) {
     if (p_unload_game) p_unload_game();
     free(rom_buf);
     rom_buf = NULL;
+}
+
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_cheatReset(JNIEnv *env, jclass c) {
+    (void)env; (void)c;
+    if (p_cheat_reset) p_cheat_reset();
+}
+
+JNIEXPORT void JNICALL
+Java_com_marrdev_mgbawear_Native_cheatSet(JNIEnv *env, jclass c, jint idx, jboolean on, jstring code) {
+    (void)c;
+    if (!p_cheat_set) return;
+    const char *s = (*env)->GetStringUTFChars(env, code, NULL);
+    p_cheat_set((unsigned)idx, on ? true : false, s);
+    (*env)->ReleaseStringUTFChars(env, code, s);
 }

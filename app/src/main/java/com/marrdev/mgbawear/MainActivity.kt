@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -64,6 +65,21 @@ import java.io.File
 import java.net.Inet4Address
 
 class MainActivity : ComponentActivity() {
+    // Back del reloj como A/B mientras se juega (si está activado en Ajustes). Home lo reserva el sistema.
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val m = Input.maskFor(keyCode)
+        if (m == 0) return super.onKeyDown(keyCode, event)
+        Input.hwMask = Input.hwMask or m
+        return true
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        val m = Input.maskFor(keyCode)
+        if (m == 0) return super.onKeyUp(keyCode, event)
+        Input.hwMask = Input.hwMask and m.inv()
+        return true
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Settings.init(this)
