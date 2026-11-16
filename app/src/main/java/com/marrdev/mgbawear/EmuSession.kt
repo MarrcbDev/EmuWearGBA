@@ -82,9 +82,11 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         }
     }
 
+    private val ONCE_FRAMES = 3
+
     private fun applyCheats(list: List<Cheats.Cheat>) {
         Native.cheatReset()
-        for (c in list) Native.cheatSet(c.id, c.on, c.code)
+        for (c in list) Native.cheatSet(c.id, c.on && !c.once, c.code)
     }
 
     /** Activa o desactiva un truco (se ejecuta en el hilo del emulador). */
@@ -96,6 +98,26 @@ class EmuSession(private val ctx: Context, private val rom: File) {
         }
         applyCheats(Cheats.load(ctx, base))
         toast = if (on) "Truco activado" else "Truco desactivado"
+    }
+
+    /**
+     * Ejecuta un truco de "una vez": lo activa solo unos cuadros (escribe el valor, p. ej. agregar un objeto)
+     * y luego vuelve a dejar activos únicamente los trucos continuos. Funciona también con el juego en pausa.
+     */
+    fun runOnce(i: Int) = post {
+        val list = Cheats.load(ctx, base)
+        val c = list.getOrNull(i)
+        if (c == null) {
+            toast = "Truco no encontrado"
+        } else {
+            Native.cheatReset()
+            for (x in list) Native.cheatSet(x.id, (x.on && !x.once) || x.id == i, x.code)
+            val sink = ShortArray(8192)
+            repeat(ONCE_FRAMES) { Native.runFrame(sink, 0) }
+            applyCheats(list)
+            dirty = true
+            toast = "Ejecutado: ${c.name}"
+        }
     }
 
     fun cheats(): List<Cheats.Cheat> = Cheats.load(ctx, base)
@@ -274,7 +296,7 @@ class EmuSession(private val ctx: Context, private val rom: File) {
                 if (r and 0x10000 != 0) Native.present()
                 val a2 = System.nanoTime()
                 val s = r and 0xFFFF
-                if (s > 0 && !Settings.turbo) pump.push(buf, s, maxFill)
+                if (s > 0) pump.push(buf, s, maxFill)
                 shorts += s
                 tRun += a1 - a0; tDraw += a2 - a1
 

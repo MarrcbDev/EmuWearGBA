@@ -3,9 +3,12 @@ package com.marrdev.mgbawear
 import android.content.Context
 import java.io.File
 
-/** Trucos por juego en filesDir/cheats/<juego>.txt, una línea por truco: estado TAB nombre TAB código. */
+/**
+ * Trucos por juego en filesDir/cheats/<juego>.txt, una línea por truco:
+ * estado TAB nombre TAB código TAB una_vez (1 = se ejecuta una sola vez, p. ej. agregar un objeto).
+ */
 object Cheats {
-    data class Cheat(val id: Int, val name: String, val code: String, val on: Boolean)
+    data class Cheat(val id: Int, val name: String, val code: String, val on: Boolean, val once: Boolean = false)
 
     private fun file(ctx: Context, base: String): File =
         File(File(ctx.filesDir, "cheats").apply { mkdirs() }, "$base.txt")
@@ -15,14 +18,14 @@ object Cheats {
         if (!f.exists()) return emptyList()
         return f.readLines().filter { it.isNotBlank() }.mapIndexedNotNull { i, line ->
             val p = line.split('\t')
-            if (p.size < 3) null else Cheat(i, p[1], p[2], p[0] == "1")
+            if (p.size < 3) null else Cheat(i, p[1], p[2], p[0] == "1", p.getOrNull(3) == "1")
         }
     }
 
     fun save(ctx: Context, base: String, list: List<Cheat>) {
         file(ctx, base).writeText(
             list.joinToString("\n") { c ->
-                (if (c.on) "1" else "0") + "\t" + clean(c.name) + "\t" + clean(c.code)
+                (if (c.on) "1" else "0") + "\t" + clean(c.name) + "\t" + clean(c.code) + "\t" + (if (c.once) "1" else "0")
             }
         )
     }

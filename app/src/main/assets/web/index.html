@@ -85,6 +85,7 @@ header p{margin:2px 0 0;color:var(--mut);font-size:14px}
   <div class="addbox">
     <input id="cgName" placeholder="Nombre (p. ej. Vidas infinitas)">
     <textarea id="cgCode" rows="3" placeholder="Código(s) GameShark / Action Replay, uno por línea"></textarea>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--mut);font-size:13px"><input type="checkbox" id="cgOnce" style="width:auto"> Ejecutar una sola vez (p. ej. agregar un objeto)</label>
     <button class="btn" onclick="addCheat()">Añadir truco</button>
   </div>
 </div></div>
@@ -224,16 +225,17 @@ async function renderCheats(){
       h('div',{style:'flex:1;min-width:0'},
         h('div',{style:'font-weight:600'},c.name),
         h('div',{style:'color:var(--mut);font-size:12px;word-break:break-all'},c.code)),
-      h('button',{class:'btn ghost sm',onclick:async()=>{await fetch('/cheat-toggle?rom='+enc(CG.name)+'&i='+c.id+'&on='+(c.on?0:1),{method:'POST'});renderCheats()}},c.on?'ON':'OFF'),
+      c.once?h('span',{class:'tag s'},'UNA VEZ'):h('button',{class:'btn ghost sm',onclick:async()=>{await fetch('/cheat-toggle?rom='+enc(CG.name)+'&i='+c.id+'&on='+(c.on?0:1),{method:'POST'});renderCheats()}},c.on?'ON':'OFF'),
       h('button',{class:'btn danger sm',onclick:async()=>{await fetch('/cheat-del?rom='+enc(CG.name)+'&i='+c.id,{method:'POST'});renderCheats()}},'🗑')));
   }
 }
 async function addCheat(){
   const n=$('#cgName').value.trim()||'Truco',c=$('#cgCode').value.trim();
   if(!c){toast('Escribe el código');return}
-  const r=await fetch('/cheat-add?rom='+enc(CG.name)+'&name='+enc(n),{method:'POST',body:c});
+  const once=$('#cgOnce').checked;
+  const r=await fetch('/cheat-add?rom='+enc(CG.name)+'&name='+enc(n)+(once?'&once=1':''),{method:'POST',body:c});
   if(!r.ok){toast('No se pudo añadir el truco');return}
-  $('#cgName').value='';$('#cgCode').value='';renderCheats();
+  $('#cgName').value='';$('#cgCode').value='';$('#cgOnce').checked=false;renderCheats();
 }
 </script>
 </body>

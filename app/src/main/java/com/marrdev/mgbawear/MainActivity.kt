@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -65,6 +66,24 @@ import java.io.File
 import java.net.Inet4Address
 
 class MainActivity : ComponentActivity() {
+    private var rotAcc = 0f
+
+    /** Bisel giratorio: en menús lo convertimos en flechas arriba/abajo para mover el foco. */
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
+        if (event == null || event.action != MotionEvent.ACTION_SCROLL || Input.gameActive) {
+            return super.onGenericMotionEvent(event)
+        }
+        rotAcc += event.getAxisValue(MotionEvent.AXIS_SCROLL)
+        while (rotAcc >= 1f) { rotAcc -= 1f; sendDpad(KeyEvent.KEYCODE_DPAD_DOWN) }
+        while (rotAcc <= -1f) { rotAcc += 1f; sendDpad(KeyEvent.KEYCODE_DPAD_UP) }
+        return true
+    }
+
+    private fun sendDpad(code: Int) {
+        dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+    }
+
     // Back del reloj como A/B mientras se juega (si está activado en Ajustes). Home lo reserva el sistema.
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val m = Input.maskFor(keyCode)

@@ -284,9 +284,13 @@ private fun CheatsPage(session: EmuSession, onBack: () -> Unit) {
             }
         }
         items(list, key = { it.id }) { c ->
-            OptionChip(c.name, if (c.on) "Activado" else "Desactivado") {
-                session.setCheat(c.id, !c.on)
-                list = list.map { if (it.id == c.id) it.copy(on = !c.on) else it }
+            if (c.once) {
+                OptionChip(c.name, "Tocar para ejecutar") { session.runOnce(c.id) }
+            } else {
+                OptionChip(c.name, if (c.on) "Activado" else "Desactivado") {
+                    session.setCheat(c.id, !c.on)
+                    list = list.map { if (it.id == c.id) it.copy(on = !c.on) else it }
+                }
             }
         }
         item { MenuChip("Volver", onClick = onBack) }

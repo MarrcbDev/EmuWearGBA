@@ -154,7 +154,7 @@ class RomServer(private val ctx: Context, port: Int = 8080) : NanoHTTPD(port) {
     private fun cheatsJson(s: IHTTPSession): Response {
         val arr = JSONArray()
         for (c in Cheats.load(ctx, romBase(s))) {
-            arr.put(JSONObject().put("id", c.id).put("name", c.name).put("code", c.code).put("on", c.on))
+            arr.put(JSONObject().put("id", c.id).put("name", c.name).put("code", c.code).put("on", c.on).put("once", c.once))
         }
         return newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", arr.toString())
     }
@@ -169,7 +169,7 @@ class RomServer(private val ctx: Context, port: Int = 8080) : NanoHTTPD(port) {
         if (code.isEmpty()) return text(Response.Status.BAD_REQUEST, "Falta el código")
         val name = (s.parms["name"] ?: "").trim().ifEmpty { "Truco" }
         val list = Cheats.load(ctx, base).toMutableList()
-        list.add(Cheats.Cheat(list.size, name, code, true))
+        list.add(Cheats.Cheat(list.size, name, code, true, s.parms["once"] == "1"))
         Cheats.save(ctx, base, list)
         return ok()
     }
