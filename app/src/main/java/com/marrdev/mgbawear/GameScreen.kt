@@ -36,7 +36,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -171,7 +170,7 @@ private fun Controls(session: EmuSession, enabled: Boolean, onPause: () -> Unit)
                             val dx = p.x - cx
                             val dy = p.y - cy
                             // El joystick se activa al tocar su base; el pulgar sigue aunque salga de ella
-                            if (stick.id == -1L && c.changedToDown() && dx * dx + dy * dy <= r * r * 1.5f) {
+                            if (stick.id == -1L && (!c.previousPressed && c.pressed) && dx * dx + dy * dy <= r * r * 1.5f) {
                                 stick.id = c.id.value
                             }
                             if (c.id.value == stick.id) {
